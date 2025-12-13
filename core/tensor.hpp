@@ -344,6 +344,7 @@ namespace TensorN
             }
             return os;
         }
+        void save(const std::string &filename, const std::string &format = "auto") const;
     };
 
     template <typename T>
@@ -450,6 +451,65 @@ namespace TensorN
         }
         return Tensor<T>({n}, values);
     }
+
+#ifdef OPENCV_ALL_HPP
+    template <typename T>
+    cv::Mat tensor_to_mat(const TensorN::Tensor<T> &tensor)
+    {
+        const auto &shape = tensor.shape();
+
+        // 只支持 1D 或 2D
+        if (shape.empty())
+        {
+            throw std::invalid_argument("Empty tensor");
+        }
+        if (shape.size() > 2)
+        {
+            throw std::invalid_argument("Only 1D or 2D tensors supported for cv::Mat");
+        }
+
+        int rows = (shape.size() == 1) ? 1 : static_cast<int>(shape[0]);
+        int cols = (shape.size() == 1) ? static_cast<int>(shape[0]) : static_cast<int>(shape[1]);
+
+        // 映射 C++ 类型到 OpenCV 类型
+        int cv_type;
+        if (std::is_same_v<T, uint8_t> || std::is_same_v<T, unsigned char>)
+        {
+            cv_type = CV_8U;
+        }
+        else if (std::is_same_v<T, int8_t> || std::is_same_v<T, signed char>)
+        {
+            cv_type = CV_8S;
+        }
+        else if (std::is_same_v<T, uint16_t>)
+        {
+            cv_type = CV_16U;
+        }
+        else if (std::is_same_v<T, int16_t>)
+        {
+            cv_type = CV_16S;
+        }
+        else if (std::is_same_v<T, int32_t>)
+        {
+            cv_type = CV_32S;
+        }
+        else if (std::is_same_v<T, float>)
+        {
+            cv_type = CV_32F;
+        }
+        else if (std::is_same_v<T, double>)
+        {
+            cv_type = CV_64F;
+        }
+        else
+        {
+            throw std::invalid_argument("Unsupported data type for cv::Mat");
+        }
+        cv::Mat mat(rows, cols, cv_type);
+        std::copy(tensor.data.begin(), tensor.data.end(), reinterpret_cast<T *>(mat.data));
+        return mat;
+    }
+#endif // OPENCV_ALL_HPP
 }
 
 #endif // !__DATA__H__

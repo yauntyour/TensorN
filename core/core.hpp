@@ -4,5 +4,6 @@
 
 #include "tensor.hpp"
 #include "einsum.hpp"
+#include "static.hpp"
 
 #endif //!__CORE__H__
