@@ -1,5 +1,5 @@
 #include <iostream>
-#include "core/core.hpp"
+#include "Tensor.hpp"
 
 using namespace TensorN;
 

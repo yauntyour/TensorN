@@ -119,6 +119,14 @@ namespace TensorN
         {
             return _size;
         }
+        // Iterators for STL compatibility
+        typename std::vector<T>::iterator begin() { return data.begin(); }
+        typename std::vector<T>::iterator end() { return data.end(); }
+
+        typename std::vector<T>::const_iterator begin() const { return data.begin(); }
+        typename std::vector<T>::const_iterator end() const { return data.end(); }
+        typename std::vector<T>::const_iterator cbegin() const { return data.cbegin(); }
+        typename std::vector<T>::const_iterator cend() const { return data.cend(); }
 
         const std::vector<size_t> &shape() const
         {
