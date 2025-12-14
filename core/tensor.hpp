@@ -357,9 +357,8 @@ namespace TensorN
         {
         }
 
-        opt(std::vector<size_t> shape)
+        opt(std::vector<size_t> shape) : tensor(shape)
         {
-            tensor = Tensor<T>(shape);
         }
 
         opt<T> &operator+(const Tensor<T> &B)
@@ -401,7 +400,24 @@ namespace TensorN
 
         operator Tensor<T>() const
         {
-            return tensor;
+            return std::move(tensor);
+        }
+
+        T &operator[](const std::vector<size_t> &indices)
+        {
+            return tensor[indices];
+        }
+        T &operator[](size_t index)
+        {
+            return tensor[index];
+        }
+        const T &operator[](const std::vector<size_t> &indices) const
+        {
+            return tensor[indices];
+        }
+        const T &operator[](size_t index) const
+        {
+            return tensor[index];
         }
 
         friend std::ostream &operator<<(std::ostream &os, const opt<T> &opt_tensor)

@@ -3,479 +3,397 @@
 #define __EINSUM__H__
 
 #include "tensor.hpp"
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <algorithm>
+#include <cassert>
 
 namespace TensorN
 {
-    // 辅助函数：解析einsum表达式
-    std::vector<std::string> parse_einsum_expression(const std::string &exp)
+    namespace einsum_tools
     {
-        // 移除空格
-        std::string cleaned;
-        for (char c : exp)
+        size_t compute_index(const std::vector<size_t> &indices,
+                             const std::vector<size_t> &shape,
+                             const std::vector<size_t> &strides)
         {
-            if (!isspace(c))
-                cleaned += c;
-        }
-
-        // 查找箭头
-        size_t arrow_pos = cleaned.find("->");
-        if (arrow_pos == std::string::npos)
-        {
-            throw std::invalid_argument("Invalid einsum expression: missing '->'");
-        }
-
-        // 分割输入和输出部分
-        std::string input_part = cleaned.substr(0, arrow_pos);
-        std::string output_part = cleaned.substr(arrow_pos + 2);
-
-        // 分割多个输入
-        std::vector<std::string> inputs;
-        size_t start = 0;
-        size_t comma_pos;
-
-        while ((comma_pos = input_part.find(',', start)) != std::string::npos)
-        {
-            inputs.push_back(input_part.substr(start, comma_pos - start));
-            start = comma_pos + 1;
-        }
-        inputs.push_back(input_part.substr(start));
-
-        // 添加输出部分作为最后一个元素
-        inputs.push_back(output_part);
-
-        return inputs;
-    }
-
-    // 辅助函数：计算多维索引的线性偏移
-    size_t compute_index(const std::vector<size_t> &indices,
-                         const std::vector<size_t> &shape,
-                         const std::vector<size_t> &strides)
-    {
-        size_t idx = 0;
-        for (size_t i = 0; i < indices.size(); ++i)
-        {
-            idx += indices[i] * strides[i];
-        }
-        return idx;
-    }
-
-    // 辅助函数：计算张量的strides
-    std::vector<size_t> compute_strides(const std::vector<size_t> &shape)
-    {
-        std::vector<size_t> strides(shape.size(), 1);
-        for (int i = shape.size() - 2; i >= 0; --i)
-        {
-            strides[i] = strides[i + 1] * shape[i + 1];
-        }
-        return strides;
-    }
-
-    // 辅助函数：获取下一个索引
-    bool increment_index(std::vector<size_t> &indices,
-                         const std::vector<size_t> &limits)
-    {
-        for (int i = indices.size() - 1; i >= 0; --i)
-        {
-            if (indices[i] + 1 < limits[i])
+            size_t idx = 0;
+            for (size_t i = 0; i < indices.size(); ++i)
             {
-                indices[i]++;
-                return true;
+                idx += indices[i] * strides[i];
             }
-            indices[i] = 0;
+            return idx;
         }
-        return false;
+
+        std::vector<size_t> compute_strides(const std::vector<size_t> &shape)
+        {
+            std::vector<size_t> strides(shape.size(), 1);
+            for (int i = shape.size() - 2; i >= 0; --i)
+            {
+                strides[i] = strides[i + 1] * shape[i + 1];
+            }
+            return strides;
+        }
+
+        bool increment_index(std::vector<size_t> &indices,
+                             const std::vector<size_t> &limits)
+        {
+            for (int i = indices.size() - 1; i >= 0; --i)
+            {
+                if (indices[i] + 1 < limits[i])
+                {
+                    indices[i]++;
+                    return true;
+                }
+                indices[i] = 0;
+            }
+            return false;
+        }
+
+        std::pair<std::vector<std::string>, std::string> encoder(const std::string &exp)
+        {
+            std::string cleaned;
+            for (char c : exp)
+            {
+                if (!isspace(c))
+                    cleaned += c;
+            }
+
+            size_t arrow_pos = cleaned.find("->");
+            if (arrow_pos == std::string::npos)
+            {
+                throw std::invalid_argument("Invalid einsum expression: missing '->'");
+            }
+
+            std::string input_part = cleaned.substr(0, arrow_pos);
+            std::string output_part = cleaned.substr(arrow_pos + 2);
+
+            std::vector<std::string> inputs;
+            size_t start = 0;
+            size_t comma_pos;
+
+            while ((comma_pos = input_part.find(',', start)) != std::string::npos)
+            {
+                inputs.push_back(input_part.substr(start, comma_pos - start));
+                start = comma_pos + 1;
+            }
+            inputs.push_back(input_part.substr(start));
+
+            // 验证 ellipsis 的正确性
+            for (const auto &input : inputs)
+            {
+                size_t ellipsis_count = 0;
+                for (size_t i = 0; i < input.size(); ++i)
+                {
+                    if (input[i] == '.')
+                    {
+                        // 检查是否是连续的三个点
+                        if (i + 2 < input.size() && input[i + 1] == '.' && input[i + 2] == '.')
+                        {
+                            ellipsis_count++;
+                            i += 2; // 跳过后续两个点
+                        }
+                        else
+                        {
+                            throw std::invalid_argument("Invalid ellipsis in einsum expression");
+                        }
+                    }
+                }
+                if (ellipsis_count > 1)
+                {
+                    throw std::invalid_argument("Multiple ellipsis in single input tensor");
+                }
+            }
+
+            // 验证输出中的 ellipsis
+            size_t ellipsis_count = 0;
+            for (size_t i = 0; i < output_part.size(); ++i)
+            {
+                if (output_part[i] == '.')
+                {
+                    if (i + 2 < output_part.size() && output_part[i + 1] == '.' && output_part[i + 2] == '.')
+                    {
+                        ellipsis_count++;
+                        i += 2;
+                    }
+                    else
+                    {
+                        throw std::invalid_argument("Invalid ellipsis in output expression");
+                    }
+                }
+            }
+            if (ellipsis_count > 1)
+            {
+                throw std::invalid_argument("Multiple ellipsis in output");
+            }
+
+            return std::make_pair(inputs, output_part);
+        }
+
+        // 解析索引字母到维度的映射
+        template <typename T>
+        std::unordered_map<char, size_t> index_encoder(
+            const std::vector<std::string> &input_labels,
+            const std::vector<const Tensor<T> *> &tensors,
+            std::vector<std::vector<size_t>> &ellipsis_dims,
+            std::vector<std::string> &expanded_labels)
+        {
+            std::unordered_map<char, size_t> label_to_size;
+            ellipsis_dims.clear();
+            ellipsis_dims.resize(input_labels.size());
+            expanded_labels.resize(input_labels.size());
+
+            // 首先收集所有非ellipsis标签的维度
+            for (size_t i = 0; i < input_labels.size(); ++i)
+            {
+                const std::string &labels = input_labels[i];
+                const auto &shape = tensors[i]->shape();
+
+                size_t explicit_dims = 0;
+                for (size_t j = 0; j < labels.size(); ++j)
+                {
+                    if (labels[j] == '.' && j + 2 < labels.size() &&
+                        labels[j + 1] == '.' && labels[j + 2] == '.')
+                    {
+                        // 跳过ellipsis
+                        j += 2;
+                    }
+                    else
+                    {
+                        explicit_dims++;
+                    }
+                }
+
+                if (explicit_dims > shape.size())
+                {
+                    throw std::invalid_argument("Number of explicit labels exceeds tensor dimension");
+                }
+
+                size_t ellipsis_ndim = shape.size() - explicit_dims;
+                ellipsis_dims[i].push_back(ellipsis_ndim);
+
+                // 构建展开后的标签字符串
+                std::string expanded;
+                for (size_t j = 0; j < labels.size(); ++j)
+                {
+                    if (labels[j] == '.' && j + 2 < labels.size() &&
+                        labels[j + 1] == '.' && labels[j + 2] == '.')
+                    {
+                        // 为ellipsis生成匿名标签
+                        for (size_t k = 0; k < ellipsis_ndim; ++k)
+                        {
+                            char anonymous_label = 'A' + k; // 使用大写字母作为匿名标签
+                            expanded += anonymous_label;
+                            // 为匿名标签设置维度
+                            if (label_to_size.find(anonymous_label) == label_to_size.end())
+                            {
+                                label_to_size[anonymous_label] = shape[explicit_dims + k];
+                            }
+                            else
+                            {
+                                // 检查维度一致性
+                                if (label_to_size[anonymous_label] != shape[explicit_dims + k])
+                                {
+                                    throw std::invalid_argument("Inconsistent dimension size in ellipsis");
+                                }
+                            }
+                        }
+                        j += 2; // 跳过后续两个点
+                    }
+                    else
+                    {
+                        expanded += labels[j];
+                        size_t dim_idx = expanded.size() - 1;
+                        if (dim_idx >= shape.size())
+                        {
+                            throw std::invalid_argument("Label index out of bounds");
+                        }
+
+                        if (label_to_size.find(labels[j]) != label_to_size.end())
+                        {
+                            // 检查维度是否一致
+                            if (label_to_size[labels[j]] != shape[dim_idx])
+                            {
+                                throw std::invalid_argument("Inconsistent dimension size for label '" +
+                                                            std::string(1, labels[j]) + "'");
+                            }
+                        }
+                        else
+                        {
+                            label_to_size[labels[j]] = shape[dim_idx];
+                        }
+                    }
+                }
+
+                expanded_labels[i] = expanded;
+            }
+
+            return label_to_size;
+        }
+    } // namespace einsum_tools
+
+    template <typename T, typename... Tensors>
+    opt<T> einsum(const std::string &exp, const Tensor<T> &A, const Tensors &...tensors)
+    {
+        std::vector<const Tensor<T> *> tensor_list{&A, &(tensors)...};
+        return einsum_multi(exp, tensor_list);
     }
 
     template <typename T>
-    opt<T> einsum(std::string exp, const Tensor<T> &A)
+    opt<T> einsum_multi(const std::string &exp, const std::vector<const Tensor<T> *> &tensors)
     {
-        // 移除空格
-        std::string cleaned;
-        for (char c : exp)
+        using namespace einsum_tools;
+
+        // 1. 解析表达式
+        auto parts = encoder(exp);
+        if (parts.first.size() < 1 || parts.first.size() != tensors.size())
         {
-            if (!isspace(c))
-                cleaned += c;
+            throw std::invalid_argument("Invalid number of input tensors in einsum expression");
         }
 
-        // 查找箭头
-        size_t arrow_pos = cleaned.find("->");
-        if (arrow_pos == std::string::npos)
-        {
-            throw std::invalid_argument("Invalid einsum expression: missing '->'");
-        }
+        // 提取输入标签和输出标签
+        std::vector<std::string> &input_labels = parts.first;
+        std::string &output_labels = parts.second;
 
-        std::string input_labels = cleaned.substr(0, arrow_pos);
-        std::string output_labels = cleaned.substr(arrow_pos + 2);
+        // 2. 解析标签并检查一致性（现在处理ellipsis）
+        std::vector<std::vector<size_t>> ellipsis_dims;
+        std::vector<std::string> expanded_input_labels;
+        auto label_to_size = index_encoder(input_labels, tensors, ellipsis_dims, expanded_input_labels);
 
-        // 验证标签长度与维度匹配
-        if (input_labels.size() != A.shape().size())
+        // 3. 处理输出标签中的ellipsis
+        std::string expanded_output_labels;
+        size_t output_explicit_dims = 0;
+        for (size_t i = 0; i < output_labels.size(); ++i)
         {
-            throw std::invalid_argument("Label count doesn't match tensor dimensions");
-        }
-
-        // 特殊情况：标量输出（求迹、求和等）
-        if (output_labels.empty())
-        {
-            // 处理求迹操作：ii->
-            if (input_labels.size() == 2 && input_labels[0] == input_labels[1])
+            if (output_labels[i] == '.' && i + 2 < output_labels.size() &&
+                output_labels[i + 1] == '.' && output_labels[i + 2] == '.')
             {
-                // 必须是方阵才能求迹
-                if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
+                // 使用第一个输入张量的ellipsis维度作为参考
+                size_t ellipsis_ndim = ellipsis_dims[0].empty() ? 0 : ellipsis_dims[0][0];
+                for (size_t k = 0; k < ellipsis_ndim; ++k)
                 {
-                    throw std::invalid_argument("Trace requires a square matrix");
+                    char anonymous_label = 'A' + k;
+                    expanded_output_labels += anonymous_label;
+                    output_explicit_dims++;
                 }
-
-                T trace = T(0);
-                for (size_t i = 0; i < A.shape()[0]; ++i)
-                {
-                    trace += A[{i, i}];
-                }
-
-                // 创建标量张量
-                Tensor<T> result({1});
-                result.data[0] = trace;
-                return opt<T>(result);
-            }
-            // 求和所有元素：...-> 或 ij-> 等
-            else
-            {
-                T sum = T(0);
-                for (size_t i = 0; i < A.size(); ++i)
-                {
-                    sum += A.data[i];
-                }
-
-                // 创建标量张量
-                Tensor<T> result({1});
-                result.data[0] = sum;
-                return opt<T>(result);
-            }
-        }
-        // 输出不是标量（转置、切片等操作）
-        else
-        {
-            // 检查输出标签是否只是输入标签的重排
-            std::string sorted_input = input_labels;
-            std::string sorted_output = output_labels;
-            std::sort(sorted_input.begin(), sorted_input.end());
-            std::sort(sorted_output.begin(), sorted_output.end());
-
-            if (sorted_input != sorted_output)
-            {
-                throw std::invalid_argument("Invalid einsum expression for single tensor operation");
-            }
-
-            // 确定输出形状
-            std::vector<size_t> output_shape(output_labels.size());
-            std::unordered_map<char, size_t> label_to_dim;
-
-            // 构建标签到维度的映射
-            for (size_t i = 0; i < input_labels.size(); ++i)
-            {
-                label_to_dim[input_labels[i]] = A.shape()[i];
-            }
-
-            for (size_t i = 0; i < output_labels.size(); ++i)
-            {
-                auto it = label_to_dim.find(output_labels[i]);
-                if (it == label_to_dim.end())
-                {
-                    throw std::invalid_argument("Output label not found in input labels");
-                }
-                output_shape[i] = it->second;
-            }
-
-            // 创建输出张量
-            Tensor<T> result(output_shape);
-
-            // 计算strides
-            std::vector<size_t> strides_A = compute_strides(A.shape());
-            std::vector<size_t> strides_out = compute_strides(output_shape);
-
-            // 构建输入和输出的索引映射
-            std::vector<size_t> index_map_A(input_labels.size());
-            std::vector<size_t> index_map_out(output_labels.size());
-
-            // 为每个标签找到在输入和输出中的位置
-            std::unordered_map<char, size_t> label_to_pos;
-            for (size_t i = 0; i < input_labels.size(); ++i)
-            {
-                label_to_pos[input_labels[i]] = i;
-            }
-
-            for (size_t i = 0; i < output_labels.size(); ++i)
-            {
-                auto it = label_to_pos.find(output_labels[i]);
-                if (it == label_to_pos.end())
-                {
-                    throw std::invalid_argument("Label mapping error");
-                }
-                index_map_out[i] = it->second;
-            }
-
-            // 遍历所有可能的索引组合
-            std::vector<size_t> index_limits;
-
-            for (char label : input_labels)
-            {
-                index_limits.push_back(label_to_dim[label]);
-            }
-
-            std::vector<size_t> indices(input_labels.size(), 0);
-
-            do
-            {
-                // 计算输入索引
-                std::vector<size_t> indices_A(input_labels.size());
-                for (size_t i = 0; i < input_labels.size(); ++i)
-                {
-                    indices_A[i] = indices[i];
-                }
-
-                // 计算输出索引
-                std::vector<size_t> indices_out(output_labels.size());
-                for (size_t i = 0; i < output_labels.size(); ++i)
-                {
-                    indices_out[i] = indices[index_map_out[i]];
-                }
-
-                // 计算线性偏移
-                size_t idx_A = compute_index(indices_A, A.shape(), strides_A);
-                size_t idx_out = compute_index(indices_out, output_shape, strides_out);
-
-                // 复制数据
-                result.data[idx_out] = A.data[idx_A];
-
-            } while (increment_index(indices, index_limits));
-
-            return opt<T>(result);
-        }
-    }
-    // 主einsum函数实现
-    template <typename T>
-    opt<T> einsum(std::string exp, const Tensor<T> &A, const Tensor<T> &B)
-    {
-        // 解析表达式
-        auto parsed = parse_einsum_expression(exp);
-        if (parsed.size() != 3)
-        {
-            throw std::invalid_argument("einsum currently only supports two input tensors");
-        }
-
-        const std::string &labelsA = parsed[0];
-        const std::string &labelsB = parsed[1];
-        const std::string &labelsOut = parsed[2];
-
-        // 验证标签长度与维度匹配
-        if (labelsA.size() != A.shape().size())
-        {
-            throw std::invalid_argument("Label count doesn't match tensor A dimensions");
-        }
-        if (labelsB.size() != B.shape().size())
-        {
-            throw std::invalid_argument("Label count doesn't match tensor B dimensions");
-        }
-
-        // 构建标签到维度的映射
-        std::unordered_map<char, size_t> label_to_dim;
-        std::unordered_map<char, std::vector<size_t>> label_to_tensor_indices;
-
-        // 处理张量A的标签
-        for (size_t i = 0; i < labelsA.size(); ++i)
-        {
-            char label = labelsA[i];
-            label_to_dim[label] = A.shape()[i];
-            label_to_tensor_indices[label].push_back(0); // 0表示来自A
-            label_to_tensor_indices[label].push_back(i); // 维度索引
-        }
-
-        // 处理张量B的标签
-        for (size_t i = 0; i < labelsB.size(); ++i)
-        {
-            char label = labelsB[i];
-            auto it = label_to_dim.find(label);
-            if (it != label_to_dim.end())
-            {
-                // 标签已存在，检查维度是否匹配
-                if (it->second != B.shape()[i])
-                {
-                    throw std::invalid_argument("Dimension mismatch for shared label");
-                }
-                label_to_tensor_indices[label].push_back(1); // 1表示来自B
-                label_to_tensor_indices[label].push_back(i);
+                i += 2; // 跳过后续两个点
             }
             else
             {
-                label_to_dim[label] = B.shape()[i];
-                label_to_tensor_indices[label].push_back(1);
-                label_to_tensor_indices[label].push_back(i);
+                expanded_output_labels += output_labels[i];
+                output_explicit_dims++;
             }
         }
 
-        // 确定输出形状
+        // 验证输出标签中的匿名标签是否都在输入中出现过
+        for (char label : expanded_output_labels)
+        {
+            if (label_to_size.find(label) == label_to_size.end())
+            {
+                throw std::invalid_argument("Output label '" + std::string(1, label) +
+                                            "' not found in input labels");
+            }
+        }
+
+        // 4. 确定输出张量的形状（使用展开后的标签）
         std::vector<size_t> output_shape;
-        std::vector<char> output_labels;
-        for (char label : labelsOut)
+        for (char label : expanded_output_labels)
         {
-            output_labels.push_back(label);
-            auto it = label_to_dim.find(label);
-            if (it == label_to_dim.end())
+            auto it = label_to_size.find(label);
+            if (it == label_to_size.end())
             {
-                throw std::invalid_argument("Output label not found in input labels");
+                throw std::invalid_argument("Output label '" + std::string(1, label) +
+                                            "' not found in input labels");
             }
             output_shape.push_back(it->second);
         }
 
-        // 确定求和标签（在输入中出现但不在输出中出现的标签）
-        std::vector<char> sum_labels;
-        for (const auto &pair : label_to_dim)
-        {
-            char label = pair.first;
-            if (labelsOut.find(label) == std::string::npos)
-            {
-                sum_labels.push_back(label);
-            }
-        }
-
-        // 创建输出张量
+        // 5. 创建输出张量
         Tensor<T> result(output_shape);
 
-        // 获取strides
-        std::vector<size_t> stridesA = compute_strides(A.shape());
-        std::vector<size_t> stridesB = compute_strides(B.shape());
-        std::vector<size_t> stridesOut = compute_strides(output_shape);
+        // 6. 预计算每个输入张量的 strides（使用展开后的标签对应的维度）
+        std::vector<std::vector<size_t>> input_strides;
+        for (const auto &tensor : tensors)
+        {
+            input_strides.push_back(compute_strides(tensor->shape()));
+        }
 
-        // 准备索引遍历
-        // 构建完整的标签列表（输出标签 + 求和标签）
-        std::vector<char> all_labels = output_labels;
-        all_labels.insert(all_labels.end(), sum_labels.begin(), sum_labels.end());
+        // 7. 准备输出 strides
+        std::vector<size_t> output_strides = compute_strides(output_shape);
 
-        // 为每个标签创建索引限制
-        std::vector<size_t> index_limits;
+        // 8. 创建所有标签的集合（使用展开后的标签）
+        std::vector<char> all_labels;
+        for (const auto &pair : label_to_size)
+        {
+            all_labels.push_back(pair.first);
+        }
+
+        // 9. 为每个标签创建维度限制
+        std::vector<size_t> label_limits;
         for (char label : all_labels)
         {
-            index_limits.push_back(label_to_dim[label]);
+            label_limits.push_back(label_to_size[label]);
         }
 
-        // 初始化索引
+        // 10. 创建映射：标签 -> 位置索引
+        std::unordered_map<char, size_t> label_to_index;
+        for (size_t i = 0; i < all_labels.size(); ++i)
+        {
+            label_to_index[all_labels[i]] = i;
+        }
+
+        // 11. 创建映射：标签 -> 是否为求和维度（不在输出中）
+        std::unordered_map<char, bool> is_sum_label;
+        for (char label : all_labels)
+        {
+            is_sum_label[label] = (expanded_output_labels.find(label) == std::string::npos);
+        }
+
+        // 12. 使用展开后的输入标签进行迭代计算
         std::vector<size_t> indices(all_labels.size(), 0);
-
-        // 为每个张量构建索引映射
-        std::vector<size_t> index_map_A(labelsA.size());
-        std::vector<size_t> index_map_B(labelsB.size());
-        std::vector<size_t> index_map_out(output_labels.size());
-
-        for (size_t i = 0; i < labelsA.size(); ++i)
-        {
-            char label = labelsA[i];
-            // 在all_labels中找到这个标签的位置
-            auto it = std::find(all_labels.begin(), all_labels.end(), label);
-            index_map_A[i] = std::distance(all_labels.begin(), it);
-        }
-
-        for (size_t i = 0; i < labelsB.size(); ++i)
-        {
-            char label = labelsB[i];
-            auto it = std::find(all_labels.begin(), all_labels.end(), label);
-            index_map_B[i] = std::distance(all_labels.begin(), it);
-        }
-
-        for (size_t i = 0; i < output_labels.size(); ++i)
-        {
-            char label = output_labels[i];
-            auto it = std::find(all_labels.begin(), all_labels.end(), label);
-            index_map_out[i] = std::distance(all_labels.begin(), it);
-        }
-
-        // 执行张量收缩
         do
         {
-            // 计算A的索引
-            std::vector<size_t> indices_A(labelsA.size());
-            for (size_t i = 0; i < labelsA.size(); ++i)
-            {
-                indices_A[i] = indices[index_map_A[i]];
-            }
-
-            // 计算B的索引
-            std::vector<size_t> indices_B(labelsB.size());
-            for (size_t i = 0; i < labelsB.size(); ++i)
-            {
-                indices_B[i] = indices[index_map_B[i]];
-            }
-
             // 计算输出索引
-            std::vector<size_t> indices_out(output_labels.size());
-            for (size_t i = 0; i < output_labels.size(); ++i)
+            std::vector<size_t> output_indices;
+            for (char label : expanded_output_labels)
             {
-                indices_out[i] = indices[index_map_out[i]];
+                size_t idx = label_to_index[label];
+                output_indices.push_back(indices[idx]);
             }
 
-            // 计算线性偏移
-            size_t idx_A = compute_index(indices_A, A.shape(), stridesA);
-            size_t idx_B = compute_index(indices_B, B.shape(), stridesB);
-            size_t idx_out = compute_index(indices_out, output_shape, stridesOut);
+            // 计算输出张量中的位置
+            size_t output_pos = 0;
+            if (!output_indices.empty())
+            {
+                output_pos = compute_index(output_indices, output_shape, output_strides);
+            }
+
+            // 计算所有输入张量在当前位置的值
+            T product = T(1);
+
+            for (size_t i = 0; i < tensors.size(); ++i)
+            {
+                // 为当前张量构建索引（使用展开后的标签）
+                std::vector<size_t> tensor_indices;
+                for (char label : expanded_input_labels[i])
+                {
+                    size_t idx = label_to_index[label];
+                    tensor_indices.push_back(indices[idx]);
+                }
+
+                // 获取该位置的值
+                size_t tensor_pos = compute_index(tensor_indices,
+                                                  tensors[i]->shape(),
+                                                  input_strides[i]);
+                product *= (*tensors[i])[tensor_pos];
+            }
 
             // 累加到输出
-            result.data[idx_out] += A.data[idx_A] * B.data[idx_B];
+            result[output_pos] += product;
 
-        } while (increment_index(indices, index_limits));
+        } while (increment_index(indices, label_limits));
 
         return opt<T>(result);
-    }
-
-    // 常用einsum操作的便捷函数
-
-    // 矩阵乘法
-    template <typename T>
-    opt<T> matmul(const Tensor<T> &A, const Tensor<T> &B)
-    {
-        if (A.shape().size() != 2 || B.shape().size() != 2)
-        {
-            throw std::invalid_argument("matmul requires 2D tensors");
-        }
-        if (A.shape()[1] != B.shape()[0])
-        {
-            throw std::invalid_argument("Dimension mismatch for matrix multiplication");
-        }
-        return einsum<T>("ij,jk->ik", A, B);
-    }
-
-    // 向量点积
-    template <typename T>
-    opt<T> dot(const Tensor<T> &A, const Tensor<T> &B)
-    {
-        if (A.shape().size() != 1 || B.shape().size() != 1)
-        {
-            throw std::invalid_argument("dot requires 1D tensors");
-        }
-        if (A.shape()[0] != B.shape()[0])
-        {
-            throw std::invalid_argument("Dimension mismatch for dot product");
-        }
-        return einsum<T>("i,i->", A, B);
-    }
-
-    // 逐元素乘法
-    template <typename T>
-    opt<T> mul(const Tensor<T> &A, const Tensor<T> &B)
-    {
-        if (!A.is_isomorphic(B))
-        {
-            throw std::invalid_argument("Tensors must have same shape for element-wise multiplication");
-        }
-        return einsum<T>("...,...->...", A, B);
-    }
-
-    // 外积
-    template <typename T>
-    opt<T> outer(const Tensor<T> &A, const Tensor<T> &B)
-    {
-        if (A.shape().size() != 1 || B.shape().size() != 1)
-        {
-            throw std::invalid_argument("outer requires 1D tensors");
-        }
-        return einsum<T>("i,j->ij", A, B);
     }
 } // namespace TensorN
 

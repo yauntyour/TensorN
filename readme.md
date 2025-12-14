@@ -15,9 +15,9 @@
 - [x] C++：面向对象绑定
   - [x] 支持STL⇄TensorN，同时TensorN提供线性的数据读取（`begin()`、`end()`、`size()`）方便转化为STL的数据
   - [ ] 支持OpenCV⇄TensorN，可以实例化为对应的`Mat_<typename>`
-- [ ] Python：标准IO转化为Pytorch的Tensor
+- [x] Python：标准IO转化为Pytorch的Tensor
 - [ ] Java：标准IO转化为数组
-- [ ] JavaScript：标准IO转化为数组
+- [x] JavaScript：标准IO转化为数组
 
 ## 4、绝对安全的所有权访问以及现代化的100%零拷贝
 
