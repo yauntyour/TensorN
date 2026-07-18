@@ -1,3 +1,6 @@
+#include <iostream>
+#include <chrono>
+#include <typeinfo>
 #include "Tensor.hpp"
 
 // 爱因斯坦缩并的性能测试函数

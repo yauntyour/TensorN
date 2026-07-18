@@ -22,7 +22,7 @@ namespace TensorN
     class Tensor
     {
     private:
-        size_t _size = 1;
+        size_t _size = 0;
         std::vector<size_t> _shape;
 
         void format_recursive(std::ostream &os, const std::vector<T> &data,
@@ -93,9 +93,11 @@ namespace TensorN
         Tensor(Tensor<T> &&other) noexcept : _size(other._size), _shape(std::move(other._shape)), data(std::move(other.data))
         {
             other._size = 0;
+            other._shape.clear();
         }
         Tensor(const std::vector<size_t> &shape) : _shape(shape)
         {
+            _size = 1;
             for (auto &e : _shape)
             {
                 _size *= e;

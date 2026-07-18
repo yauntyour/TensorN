@@ -1,0 +1,9 @@
+*.exe
+*.npy
+*.npz
+*.csv
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+.vscode

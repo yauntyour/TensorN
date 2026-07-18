@@ -6,17 +6,34 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
-#include <cassert>
+#include <stdexcept>
 
 namespace TensorN
 {
     namespace einsum_tools
     {
+        const std::string ANON_PREFIX("\x80\x80");
+
+        inline std::string make_anon_label(size_t index)
+        {
+            return ANON_PREFIX + std::to_string(index);
+        }
+
+        inline bool is_anon_label(const std::string &label)
+        {
+            return label.size() >= 2 &&
+                   label[0] == '\x80' &&
+                   label[1] == '\x80';
+        }
+
         size_t compute_index(const std::vector<size_t> &indices,
-                             const std::vector<size_t> &shape,
+                             const std::vector<size_t> & /*shape*/,
                              const std::vector<size_t> &strides)
         {
+            if (indices.empty())
+                return 0;
             size_t idx = 0;
             for (size_t i = 0; i < indices.size(); ++i)
             {
@@ -27,8 +44,10 @@ namespace TensorN
 
         std::vector<size_t> compute_strides(const std::vector<size_t> &shape)
         {
+            if (shape.empty())
+                return {};
             std::vector<size_t> strides(shape.size(), 1);
-            for (int i = shape.size() - 2; i >= 0; --i)
+            for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i)
             {
                 strides[i] = strides[i + 1] * shape[i + 1];
             }
@@ -38,7 +57,7 @@ namespace TensorN
         bool increment_index(std::vector<size_t> &indices,
                              const std::vector<size_t> &limits)
         {
-            for (int i = indices.size() - 1; i >= 0; --i)
+            for (int i = static_cast<int>(indices.size()) - 1; i >= 0; --i)
             {
                 if (indices[i] + 1 < limits[i])
                 {
@@ -50,185 +69,334 @@ namespace TensorN
             return false;
         }
 
-        std::pair<std::vector<std::string>, std::string> encoder(const std::string &exp)
+        struct EinsumExpr
         {
+            std::vector<std::string> input_labels;
+            std::string output_labels;
+            bool has_arrow;
+        };
+
+        EinsumExpr parse_expression(const std::string &exp)
+        {
+            EinsumExpr result;
+            result.has_arrow = false;
+
             std::string cleaned;
             for (char c : exp)
             {
-                if (!isspace(c))
+                if (!isspace(static_cast<unsigned char>(c)))
                     cleaned += c;
             }
 
+            if (cleaned.empty())
+                throw std::invalid_argument("Empty einsum expression");
+
             size_t arrow_pos = cleaned.find("->");
-            if (arrow_pos == std::string::npos)
+
+            std::string input_part;
+            std::string output_part;
+
+            if (arrow_pos != std::string::npos)
             {
-                throw std::invalid_argument("Invalid einsum expression: missing '->'");
+                result.has_arrow = true;
+                input_part = cleaned.substr(0, arrow_pos);
+                output_part = cleaned.substr(arrow_pos + 2);
+            }
+            else
+            {
+                input_part = cleaned;
             }
 
-            std::string input_part = cleaned.substr(0, arrow_pos);
-            std::string output_part = cleaned.substr(arrow_pos + 2);
-
-            std::vector<std::string> inputs;
             size_t start = 0;
             size_t comma_pos;
-
             while ((comma_pos = input_part.find(',', start)) != std::string::npos)
             {
-                inputs.push_back(input_part.substr(start, comma_pos - start));
+                result.input_labels.push_back(input_part.substr(start, comma_pos - start));
                 start = comma_pos + 1;
             }
-            inputs.push_back(input_part.substr(start));
+            result.input_labels.push_back(input_part.substr(start));
 
-            // 验证 ellipsis 的正确性
-            for (const auto &input : inputs)
+            if (result.input_labels.empty())
+                throw std::invalid_argument("No input tensors specified");
+
+            for (const auto &input : result.input_labels)
             {
-                size_t ellipsis_count = 0;
+                size_t count = 0;
                 for (size_t i = 0; i < input.size(); ++i)
                 {
-                    if (input[i] == '.')
+                    if (input[i] == '.' && i + 2 < input.size() &&
+                        input[i + 1] == '.' && input[i + 2] == '.')
                     {
-                        // 检查是否是连续的三个点
-                        if (i + 2 < input.size() && input[i + 1] == '.' && input[i + 2] == '.')
+                        count++;
+                        i += 2;
+                    }
+                }
+                if (count > 1)
+                    throw std::invalid_argument("Multiple ellipsis in single input tensor");
+            }
+
+            if (result.has_arrow)
+            {
+                size_t count = 0;
+                for (size_t i = 0; i < output_part.size(); ++i)
+                {
+                    if (output_part[i] == '.' && i + 2 < output_part.size() &&
+                        output_part[i + 1] == '.' && output_part[i + 2] == '.')
+                    {
+                        count++;
+                        i += 2;
+                    }
+                }
+                if (count > 1)
+                    throw std::invalid_argument("Multiple ellipsis in output");
+
+                result.output_labels = output_part;
+            }
+            else
+            {
+                std::unordered_map<char, size_t> char_count;
+                bool has_ellipsis = false;
+
+                for (const auto &input : result.input_labels)
+                {
+                    for (size_t i = 0; i < input.size(); ++i)
+                    {
+                        if (input[i] == '.' && i + 2 < input.size() &&
+                            input[i + 1] == '.' && input[i + 2] == '.')
                         {
-                            ellipsis_count++;
-                            i += 2; // 跳过后续两个点
+                            has_ellipsis = true;
+                            i += 2;
                         }
                         else
                         {
-                            throw std::invalid_argument("Invalid ellipsis in einsum expression");
+                            char_count[input[i]]++;
                         }
                     }
                 }
-                if (ellipsis_count > 1)
+
+                if (has_ellipsis)
+                    result.output_labels = "...";
+
+                std::string odd_labels;
+                for (const auto &pair : char_count)
                 {
-                    throw std::invalid_argument("Multiple ellipsis in single input tensor");
+                    if (pair.second % 2 != 0)
+                        odd_labels += pair.first;
                 }
+                std::sort(odd_labels.begin(), odd_labels.end());
+                result.output_labels += odd_labels;
             }
 
-            // 验证输出中的 ellipsis
-            size_t ellipsis_count = 0;
-            for (size_t i = 0; i < output_part.size(); ++i)
-            {
-                if (output_part[i] == '.')
-                {
-                    if (i + 2 < output_part.size() && output_part[i + 1] == '.' && output_part[i + 2] == '.')
-                    {
-                        ellipsis_count++;
-                        i += 2;
-                    }
-                    else
-                    {
-                        throw std::invalid_argument("Invalid ellipsis in output expression");
-                    }
-                }
-            }
-            if (ellipsis_count > 1)
-            {
-                throw std::invalid_argument("Multiple ellipsis in output");
-            }
-
-            return std::make_pair(inputs, output_part);
+            return result;
         }
 
-        // 解析索引字母到维度的映射
-        template <typename T>
-        std::unordered_map<char, size_t> index_encoder(
-            const std::vector<std::string> &input_labels,
-            const std::vector<const Tensor<T> *> &tensors,
-            std::vector<std::vector<size_t>> &ellipsis_dims,
-            std::vector<std::string> &expanded_labels)
+        struct IndexResult
         {
-            std::unordered_map<char, size_t> label_to_size;
-            ellipsis_dims.clear();
-            ellipsis_dims.resize(input_labels.size());
-            expanded_labels.resize(input_labels.size());
+            std::unordered_map<std::string, size_t> label_to_size;
+            std::vector<std::string> all_labels;
+            std::vector<std::string> expanded_input_labels;
+            std::string expanded_output_labels;
+            std::vector<size_t> ellipsis_ndims;
+        };
 
-            // 首先收集所有非ellipsis标签的维度
-            for (size_t i = 0; i < input_labels.size(); ++i)
+        template <typename T>
+        IndexResult build_index_mapping(
+            const EinsumExpr &expr,
+            const std::vector<const Tensor<T> *> &tensors)
+        {
+            IndexResult result;
+            result.ellipsis_ndims.resize(expr.input_labels.size());
+
+            std::vector<std::string> ellipsis_anon_labels;
+            bool ellipsis_labels_initialized = false;
+            size_t anon_counter = 0;
+
+            auto register_label = [&](const std::string &label, size_t dim_size)
             {
-                const std::string &labels = input_labels[i];
+                if (result.label_to_size.count(label))
+                {
+                    if (result.label_to_size[label] != dim_size)
+                    {
+                        throw std::invalid_argument(
+                            "Inconsistent dimension size for label '" + label +
+                            "': expected " + std::to_string(result.label_to_size[label]) +
+                            ", got " + std::to_string(dim_size));
+                    }
+                }
+                else
+                {
+                    result.label_to_size[label] = dim_size;
+                    result.all_labels.push_back(label);
+                }
+            };
+
+            for (size_t i = 0; i < expr.input_labels.size(); ++i)
+            {
+                const std::string &labels = expr.input_labels[i];
                 const auto &shape = tensors[i]->shape();
 
-                size_t explicit_dims = 0;
+                size_t explicit_count = 0;
                 for (size_t j = 0; j < labels.size(); ++j)
                 {
                     if (labels[j] == '.' && j + 2 < labels.size() &&
                         labels[j + 1] == '.' && labels[j + 2] == '.')
                     {
-                        // 跳过ellipsis
                         j += 2;
                     }
                     else
                     {
-                        explicit_dims++;
+                        explicit_count++;
                     }
                 }
 
-                if (explicit_dims > shape.size())
+                if (explicit_count > shape.size())
                 {
-                    throw std::invalid_argument("Number of explicit labels exceeds tensor dimension");
+                    throw std::invalid_argument(
+                        "Number of explicit labels (" + std::to_string(explicit_count) +
+                        ") exceeds tensor " + std::to_string(i) +
+                        " dimension (" + std::to_string(shape.size()) + ")");
                 }
 
-                size_t ellipsis_ndim = shape.size() - explicit_dims;
-                ellipsis_dims[i].push_back(ellipsis_ndim);
+                size_t ndim = shape.size() - explicit_count;
+                result.ellipsis_ndims[i] = ndim;
 
-                // 构建展开后的标签字符串
                 std::string expanded;
+
+                if (ndim > 0)
+                {
+                    if (!ellipsis_labels_initialized)
+                    {
+                        for (size_t k = 0; k < ndim; ++k)
+                        {
+                            ellipsis_anon_labels.push_back(make_anon_label(anon_counter++));
+                        }
+                        ellipsis_labels_initialized = true;
+                    }
+                    else if (ellipsis_anon_labels.size() != ndim)
+                    {
+                        throw std::invalid_argument(
+                            "Inconsistent ellipsis dimensions across input tensors");
+                    }
+
+                    for (size_t k = 0; k < ndim; ++k)
+                    {
+                        expanded += ellipsis_anon_labels[k];
+                        register_label(ellipsis_anon_labels[k], shape[k]);
+                    }
+                }
+
+                size_t dim_idx = ndim;
                 for (size_t j = 0; j < labels.size(); ++j)
                 {
                     if (labels[j] == '.' && j + 2 < labels.size() &&
                         labels[j + 1] == '.' && labels[j + 2] == '.')
                     {
-                        // 为ellipsis生成匿名标签
-                        for (size_t k = 0; k < ellipsis_ndim; ++k)
+                        j += 2;
+                        continue;
+                    }
+
+                    std::string label(1, labels[j]);
+                    expanded += label;
+
+                    if (dim_idx >= shape.size())
+                    {
+                        throw std::invalid_argument(
+                            "Label index out of bounds for tensor " + std::to_string(i));
+                    }
+
+                    register_label(label, shape[dim_idx]);
+                    dim_idx++;
+                }
+
+                result.expanded_input_labels.push_back(expanded);
+            }
+
+            // Process output labels
+            std::string expanded_output;
+            for (size_t j = 0; j < expr.output_labels.size(); ++j)
+            {
+                if (expr.output_labels[j] == '.' && j + 2 < expr.output_labels.size() &&
+                    expr.output_labels[j + 1] == '.' && expr.output_labels[j + 2] == '.')
+                {
+                    for (const auto &anon : ellipsis_anon_labels)
+                    {
+                        expanded_output += anon;
+                    }
+                    j += 2;
+                }
+                else
+                {
+                    expanded_output += std::string(1, expr.output_labels[j]);
+                }
+            }
+
+            // Validate output labels
+            for (size_t j = 0; j < expanded_output.size(); ++j)
+            {
+                // Extract full label (could be anonymous)
+                std::string label;
+                if (expanded_output[j] == '\x80')
+                {
+                    // Anonymous label: extract until next non-anon char
+                    size_t k = j;
+                    while (k < expanded_output.size() && (expanded_output[k] == '\x80' || expanded_output[k] == '\x81'))
+                        k++;
+                    // Actually, let's extract the full anon label properly
+                    // Anonymous labels are: \x80\x80 + digits
+                    label = expanded_output.substr(j, 2);
+                    j += 1; // Will be incremented by loop
+                    // Collect digits
+                    while (j + 1 < expanded_output.size() && expanded_output[j + 1] >= '0' && expanded_output[j + 1] <= '9')
+                    {
+                        label += expanded_output[j + 1];
+                        j++;
+                    }
+                }
+                else
+                {
+                    label = std::string(1, expanded_output[j]);
+                }
+
+                if (result.label_to_size.find(label) == result.label_to_size.end())
+                {
+                    throw std::invalid_argument(
+                        "Output label not found in input labels");
+                }
+            }
+
+            result.expanded_output_labels = expanded_output;
+
+            // Check for duplicate output labels
+            {
+                std::unordered_set<std::string> output_set;
+                for (size_t j = 0; j < expanded_output.size(); ++j)
+                {
+                    std::string label;
+                    if (expanded_output[j] == '\x80')
+                    {
+                        label = expanded_output.substr(j, 2);
+                        j += 1;
+                        while (j + 1 < expanded_output.size() && expanded_output[j + 1] >= '0' && expanded_output[j + 1] <= '9')
                         {
-                            char anonymous_label = 'A' + k; // 使用大写字母作为匿名标签
-                            expanded += anonymous_label;
-                            // 为匿名标签设置维度
-                            if (label_to_size.find(anonymous_label) == label_to_size.end())
-                            {
-                                label_to_size[anonymous_label] = shape[explicit_dims + k];
-                            }
-                            else
-                            {
-                                // 检查维度一致性
-                                if (label_to_size[anonymous_label] != shape[explicit_dims + k])
-                                {
-                                    throw std::invalid_argument("Inconsistent dimension size in ellipsis");
-                                }
-                            }
+                            label += expanded_output[j + 1];
+                            j++;
                         }
-                        j += 2; // 跳过后续两个点
                     }
                     else
                     {
-                        expanded += labels[j];
-                        size_t dim_idx = expanded.size() - 1;
-                        if (dim_idx >= shape.size())
-                        {
-                            throw std::invalid_argument("Label index out of bounds");
-                        }
-
-                        if (label_to_size.find(labels[j]) != label_to_size.end())
-                        {
-                            // 检查维度是否一致
-                            if (label_to_size[labels[j]] != shape[dim_idx])
-                            {
-                                throw std::invalid_argument("Inconsistent dimension size for label '" +
-                                                            std::string(1, labels[j]) + "'");
-                            }
-                        }
-                        else
-                        {
-                            label_to_size[labels[j]] = shape[dim_idx];
-                        }
+                        label = std::string(1, expanded_output[j]);
                     }
-                }
 
-                expanded_labels[i] = expanded;
+                    if (output_set.count(label))
+                    {
+                        throw std::invalid_argument(
+                            "Duplicate label in output");
+                    }
+                    output_set.insert(label);
+                }
             }
 
-            return label_to_size;
+            return result;
         }
     } // namespace einsum_tools
 
@@ -244,154 +412,152 @@ namespace TensorN
     {
         using namespace einsum_tools;
 
-        // 1. 解析表达式
-        auto parts = encoder(exp);
-        if (parts.first.size() < 1 || parts.first.size() != tensors.size())
+        EinsumExpr expr = parse_expression(exp);
+
+        if (tensors.empty())
+            throw std::invalid_argument("No input tensors provided");
+
+        if (expr.input_labels.size() != tensors.size())
         {
-            throw std::invalid_argument("Invalid number of input tensors in einsum expression");
+            throw std::invalid_argument(
+                "Expected " + std::to_string(expr.input_labels.size()) +
+                " input tensors, got " + std::to_string(tensors.size()));
         }
 
-        // 提取输入标签和输出标签
-        std::vector<std::string> &input_labels = parts.first;
-        std::string &output_labels = parts.second;
+        IndexResult idx = build_index_mapping(expr, tensors);
 
-        // 2. 解析标签并检查一致性（现在处理ellipsis）
-        std::vector<std::vector<size_t>> ellipsis_dims;
-        std::vector<std::string> expanded_input_labels;
-        auto label_to_size = index_encoder(input_labels, tensors, ellipsis_dims, expanded_input_labels);
-
-        // 3. 处理输出标签中的ellipsis
-        std::string expanded_output_labels;
-        size_t output_explicit_dims = 0;
-        for (size_t i = 0; i < output_labels.size(); ++i)
-        {
-            if (output_labels[i] == '.' && i + 2 < output_labels.size() &&
-                output_labels[i + 1] == '.' && output_labels[i + 2] == '.')
-            {
-                // 使用第一个输入张量的ellipsis维度作为参考
-                size_t ellipsis_ndim = ellipsis_dims[0].empty() ? 0 : ellipsis_dims[0][0];
-                for (size_t k = 0; k < ellipsis_ndim; ++k)
-                {
-                    char anonymous_label = 'A' + k;
-                    expanded_output_labels += anonymous_label;
-                    output_explicit_dims++;
-                }
-                i += 2; // 跳过后续两个点
-            }
-            else
-            {
-                expanded_output_labels += output_labels[i];
-                output_explicit_dims++;
-            }
-        }
-
-        // 验证输出标签中的匿名标签是否都在输入中出现过
-        for (char label : expanded_output_labels)
-        {
-            if (label_to_size.find(label) == label_to_size.end())
-            {
-                throw std::invalid_argument("Output label '" + std::string(1, label) +
-                                            "' not found in input labels");
-            }
-        }
-
-        // 4. 确定输出张量的形状（使用展开后的标签）
+        // Build output shape from expanded_output_labels
         std::vector<size_t> output_shape;
-        for (char label : expanded_output_labels)
         {
-            auto it = label_to_size.find(label);
-            if (it == label_to_size.end())
+            const std::string &out = idx.expanded_output_labels;
+            for (size_t j = 0; j < out.size(); ++j)
             {
-                throw std::invalid_argument("Output label '" + std::string(1, label) +
-                                            "' not found in input labels");
+                std::string label;
+                if (out[j] == '\x80')
+                {
+                    label = out.substr(j, 2);
+                    j += 1;
+                    while (j + 1 < out.size() && out[j + 1] >= '0' && out[j + 1] <= '9')
+                    {
+                        label += out[j + 1];
+                        j++;
+                    }
+                }
+                else
+                {
+                    label = std::string(1, out[j]);
+                }
+
+                auto it = idx.label_to_size.find(label);
+                if (it == idx.label_to_size.end())
+                {
+                    throw std::invalid_argument("Output label not found in label map");
+                }
+                output_shape.push_back(it->second);
             }
-            output_shape.push_back(it->second);
         }
 
-        // 5. 创建输出张量
         Tensor<T> result(output_shape);
 
-        // 6. 预计算每个输入张量的 strides（使用展开后的标签对应的维度）
+        // Compute strides
         std::vector<std::vector<size_t>> input_strides;
         for (const auto &tensor : tensors)
         {
             input_strides.push_back(compute_strides(tensor->shape()));
         }
-
-        // 7. 准备输出 strides
         std::vector<size_t> output_strides = compute_strides(output_shape);
 
-        // 8. 创建所有标签的集合（使用展开后的标签）
-        std::vector<char> all_labels;
-        for (const auto &pair : label_to_size)
-        {
-            all_labels.push_back(pair.first);
-        }
-
-        // 9. 为每个标签创建维度限制
+        // Build iteration limits and label->iteration-index mapping
         std::vector<size_t> label_limits;
-        for (char label : all_labels)
+        for (const auto &label : idx.all_labels)
         {
-            label_limits.push_back(label_to_size[label]);
+            label_limits.push_back(idx.label_to_size[label]);
         }
 
-        // 10. 创建映射：标签 -> 位置索引
-        std::unordered_map<char, size_t> label_to_index;
-        for (size_t i = 0; i < all_labels.size(); ++i)
+        std::unordered_map<std::string, size_t> label_to_iter_idx;
+        for (size_t i = 0; i < idx.all_labels.size(); ++i)
         {
-            label_to_index[all_labels[i]] = i;
+            label_to_iter_idx[idx.all_labels[i]] = i;
         }
 
-        // 11. 创建映射：标签 -> 是否为求和维度（不在输出中）
-        std::unordered_map<char, bool> is_sum_label;
-        for (char label : all_labels)
+        // Helper: parse expanded label string into individual labels
+        auto parse_expanded = [](const std::string &s) -> std::vector<std::string>
         {
-            is_sum_label[label] = (expanded_output_labels.find(label) == std::string::npos);
+            std::vector<std::string> labels;
+            for (size_t i = 0; i < s.size(); ++i)
+            {
+                if (s[i] == '\x80')
+                {
+                    std::string label = s.substr(i, 2);
+                    i += 1;
+                    while (i + 1 < s.size() && s[i + 1] >= '0' && s[i + 1] <= '9')
+                    {
+                        label += s[i + 1];
+                        i++;
+                    }
+                    labels.push_back(label);
+                }
+                else
+                {
+                    labels.push_back(std::string(1, s[i]));
+                }
+            }
+            return labels;
+        };
+
+        // Parse all label strings once
+        std::vector<std::vector<std::string>> input_label_lists(idx.expanded_input_labels.size());
+        for (size_t i = 0; i < idx.expanded_input_labels.size(); ++i)
+        {
+            input_label_lists[i] = parse_expanded(idx.expanded_input_labels[i]);
+        }
+        std::vector<std::string> output_label_list = parse_expanded(idx.expanded_output_labels);
+
+        // Pre-compute iteration index lookups for each input and output
+        std::vector<std::vector<size_t>> input_iter_indices(idx.expanded_input_labels.size());
+        for (size_t i = 0; i < input_label_lists.size(); ++i)
+        {
+            input_iter_indices[i].resize(input_label_lists[i].size());
+            for (size_t j = 0; j < input_label_lists[i].size(); ++j)
+            {
+                input_iter_indices[i][j] = label_to_iter_idx[input_label_lists[i][j]];
+            }
+        }
+        std::vector<size_t> output_iter_indices(output_label_list.size());
+        for (size_t j = 0; j < output_label_list.size(); ++j)
+        {
+            output_iter_indices[j] = label_to_iter_idx[output_label_list[j]];
         }
 
-        // 12. 使用展开后的输入标签进行迭代计算
-        std::vector<size_t> indices(all_labels.size(), 0);
+        // Main contraction loop
+        std::vector<size_t> iter_indices(idx.all_labels.size(), 0);
+
         do
         {
-            // 计算输出索引
-            std::vector<size_t> output_indices;
-            for (char label : expanded_output_labels)
+            // Compute output position
+            std::vector<size_t> output_indices(output_iter_indices.size());
+            for (size_t j = 0; j < output_iter_indices.size(); ++j)
             {
-                size_t idx = label_to_index[label];
-                output_indices.push_back(indices[idx]);
+                output_indices[j] = iter_indices[output_iter_indices[j]];
             }
+            size_t output_pos = compute_index(output_indices, output_shape, output_strides);
 
-            // 计算输出张量中的位置
-            size_t output_pos = 0;
-            if (!output_indices.empty())
-            {
-                output_pos = compute_index(output_indices, output_shape, output_strides);
-            }
-
-            // 计算所有输入张量在当前位置的值
+            // Compute product of all input values
             T product = T(1);
-
             for (size_t i = 0; i < tensors.size(); ++i)
             {
-                // 为当前张量构建索引（使用展开后的标签）
-                std::vector<size_t> tensor_indices;
-                for (char label : expanded_input_labels[i])
+                std::vector<size_t> tensor_indices(input_iter_indices[i].size());
+                for (size_t j = 0; j < input_iter_indices[i].size(); ++j)
                 {
-                    size_t idx = label_to_index[label];
-                    tensor_indices.push_back(indices[idx]);
+                    tensor_indices[j] = iter_indices[input_iter_indices[i][j]];
                 }
-
-                // 获取该位置的值
-                size_t tensor_pos = compute_index(tensor_indices,
-                                                  tensors[i]->shape(),
-                                                  input_strides[i]);
+                size_t tensor_pos = compute_index(tensor_indices, tensors[i]->shape(), input_strides[i]);
                 product *= (*tensors[i])[tensor_pos];
             }
 
-            // 累加到输出
-            result[output_pos] += product;
+            result.data[output_pos] += product;
 
-        } while (increment_index(indices, label_limits));
+        } while (increment_index(iter_indices, label_limits));
 
         return opt<T>(result);
     }
