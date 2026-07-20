@@ -2,8 +2,9 @@
 *.npy
 *.npz
 *.csv
-build/
+build
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 .vscode
+build_cuda

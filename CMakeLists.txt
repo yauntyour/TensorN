@@ -5,7 +5,7 @@ project(TensorN
     LANGUAGES CXX
 )
 
-set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -22,7 +22,7 @@ target_include_directories(tensorn INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
-target_compile_features(tensorn INTERFACE cxx_std_26)
+target_compile_features(tensorn INTERFACE cxx_std_23)
 
 # ---- OpenBLAS CPU backend ----
 if(TENSORN_BUILD_OPENBLAS)
@@ -67,10 +67,13 @@ if(TENSORN_BUILD_CUDA)
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
             $<INSTALL_INTERFACE:include>
         )
+        find_package(CUDAToolkit REQUIRED)
         target_link_libraries(tensorn_cuda PUBLIC
             tensorn
-            ${CUDA_CUBLAS_LIBRARIES}
+            CUDA::cublas
+            CUDA::cudart
         )
+        target_compile_options(tensorn_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
         set_target_properties(tensorn_cuda PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON
             CUDA_ARCHITECTURES "70;75;80;86"
@@ -143,23 +146,61 @@ endif()
 
 # ---- Benchmarks ----
 if(TENSORN_BUILD_BENCHMARKS)
+    # Original combined benchmark (Native + BLAS + CUDA)
     add_executable(benchmark benchmark.cpp)
-    target_link_libraries(benchmark PRIVATE
-        tensorn
-        nlohmann_json::nlohmann_json
-        ZLIB::ZLIB
-    )
+    target_link_libraries(benchmark PRIVATE tensorn)
+
+    # MSVC O3 optimization flags
+    if(MSVC)
+        target_compile_options(benchmark PRIVATE /O2 /Ot /Ob2 /Oi /GL)
+        target_link_options(benchmark PRIVATE /LTCG)
+    endif()
 
     if(TENSORN_BUILD_CUDA)
         target_compile_definitions(benchmark PRIVATE TENSORN_CUDA_AVAILABLE)
         target_link_libraries(benchmark PRIVATE tensorn_cuda)
+        find_package(CUDAToolkit REQUIRED)
+        target_include_directories(benchmark PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(benchmark PRIVATE CUDA::cublas CUDA::cudart)
     endif()
 
-    if(TENSORN_BUILD_OPENBLAS AND OPENBLAS_FOUND)
+    if(TENSORN_BUILD_OPENBLAS AND OPENBLAS_FOUND AND NOT MSVC)
         if(TARGET PkgConfig::OpenBLAS)
             target_link_libraries(benchmark PRIVATE PkgConfig::OpenBLAS)
         elseif(DEFINED OPENBLAS_LIBRARIES)
             target_link_libraries(benchmark PRIVATE ${OPENBLAS_LIBRARIES})
         endif()
+    endif()
+
+    # ---- Native-only baseline (no BLAS, no CUDA) ----
+    add_executable(benchmark_native benchmark_native.cpp)
+    target_link_libraries(benchmark_native PRIVATE tensorn)
+
+    # ---- Native vs OpenBLAS (MSYS2 g++ O3 controlled comparison) ----
+    add_executable(benchmark_blas benchmark_blas.cpp)
+    target_link_libraries(benchmark_blas PRIVATE tensorn)
+
+    if(TENSORN_BUILD_OPENBLAS AND OPENBLAS_FOUND)
+        if(DEFINED OPENBLAS_INCLUDE_DIRS)
+            target_include_directories(benchmark_blas PRIVATE ${OPENBLAS_INCLUDE_DIRS})
+        endif()
+        if(TARGET PkgConfig::OpenBLAS)
+            target_link_libraries(benchmark_blas PRIVATE PkgConfig::OpenBLAS)
+        elseif(DEFINED OPENBLAS_LIBRARIES)
+            target_link_libraries(benchmark_blas PRIVATE ${OPENBLAS_LIBRARIES})
+        endif()
+    endif()
+
+    # ---- Native vs CUDA (MSVC O3 controlled comparison, no BLAS) ----
+    if(TENSORN_BUILD_CUDA)
+        add_executable(benchmark_cuda benchmark_cuda.cpp)
+        target_compile_definitions(benchmark_cuda PRIVATE TENSORN_CUDA_AVAILABLE)
+        target_link_libraries(benchmark_cuda PRIVATE tensorn tensorn_cuda)
+        find_package(CUDAToolkit REQUIRED)
+        target_include_directories(benchmark_cuda PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(benchmark_cuda PRIVATE CUDA::cublas CUDA::cudart)
+        set_target_properties(benchmark_cuda PROPERTIES
+            CUDA_RESOLVE_DEVICE_SYMBOLS ON
+        )
     endif()
 endif()

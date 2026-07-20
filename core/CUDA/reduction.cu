@@ -96,7 +96,7 @@ namespace TensorN
             if (n == 0) return T(0);
 
             size_t block_size = 256;
-            size_t grid_size = std::min((n + block_size * 2 - 1) / (block_size * 2), size_t(1024));
+            size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
             cudaMalloc(&d_intermediate, grid_size * sizeof(T));
@@ -121,7 +121,7 @@ namespace TensorN
             if (n == 0) return std::numeric_limits<T>::lowest();
 
             size_t block_size = 256;
-            size_t grid_size = std::min((n + block_size * 2 - 1) / (block_size * 2), size_t(1024));
+            size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
             cudaMalloc(&d_intermediate, grid_size * sizeof(T));
@@ -147,7 +147,7 @@ namespace TensorN
             if (n == 0) return std::numeric_limits<T>::max();
 
             size_t block_size = 256;
-            size_t grid_size = std::min((n + block_size * 2 - 1) / (block_size * 2), size_t(1024));
+            size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
             cudaMalloc(&d_intermediate, grid_size * sizeof(T));
