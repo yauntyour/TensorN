@@ -6,5 +6,6 @@
 #include "einsum.hpp"
 #include "operations.hpp"
 #include "static.hpp"
+#include "BLAS/blas_tensor.hpp"
 
 #endif //!__CORE__H__
