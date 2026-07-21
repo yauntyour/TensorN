@@ -10,7 +10,7 @@ A C++17 header-only tensor library with **OpenBLAS** and **CUDA/cuBLAS** backend
 - **Three acceleration backends** - Native C++, OpenBLAS, CUDA/cuBLAS
 - **Einstein summation** - `einsum("ij,jk->ik", A, B)` for flexible tensor operations
 - **Rich operation set** - linear algebra, element-wise math, activations, reductions, convolution
-- **Data I/O** - CSV, NumPy `.npy`/`.npz`, JSON formats
+- **Data I/O** - CSV, NumPy `.npy`/`.npz`, JSON, PyTorch `.pt` formats, with TensorN↔PyTorch bridge tool
 - **OpenCV interop** - optional `cv::Mat` conversion
 
 ## Quick Start
@@ -66,7 +66,7 @@ TensorN
 ├── opt<T>              Lazy evaluation wrapper for chained operations
 ├── einsum()            Einstein summation engine
 ├── operations.hpp      High-level ops (matmul, dot, outer, gram, ...)
-├── static.hpp          Data I/O (csv, npy, npz, json)
+├── static.hpp          Data I/O (csv, npy, npz, json, pt)
 ├── BLAS/               OpenBLAS accelerated backend
 │   └── blas_tensor.hpp
 └── CUDA/               CUDA/cuBLAS accelerated backend
@@ -129,8 +129,25 @@ tensor.save("data.csv");   // CSV (1D/2D only)
 tensor.save("data.npy");   // NumPy format
 tensor.save("data.npz");   // NumPy compressed
 tensor.save("data.json");  // JSON with shape + data
+tensor.save("data.pt");    // TensorN .pt binary format (also .pth)
 
-auto t = load<float>("data.npy");  // auto-detect by extension
+auto t = load<float>("data.pt");  // auto-detect by extension
+```
+
+**Supported types:** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`
+
+**PyTorch interop:** use `tools/pt_converter.py` to convert between TensorN `.pt` and PyTorch `.pth`:
+
+```bash
+# PyTorch .pth → TensorN .pt
+python tools/pt_converter.py torch2pt model.pth data.pt
+
+# TensorN .pt → PyTorch .pth
+python tools/pt_converter.py pt2torch data.pt model.pth
+
+# also supports .npy as intermediate
+python tools/pt_converter.py np2pt data.npy data.pt
+python tools/pt_converter.py pt2np data.pt data.npy
 ```
 
 ## Benchmark

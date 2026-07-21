@@ -10,7 +10,7 @@
 - **三种加速后端** - 原生 C++、OpenBLAS、CUDA/cuBLAS
 - **爱因斯坦求和** - `einsum("ij,jk->ik", A, B)` 实现灵活的张量运算
 - **丰富的运算集** - 线性代数、逐元素数学运算、激活函数、规约、卷积
-- **数据 I/O** - CSV、NumPy `.npy`/`.npz`、JSON 格式
+- **数据 I/O** - CSV、NumPy `.npy`/`.npz`、JSON、PyTorch `.pt` 格式，附带 TensorN↔PyTorch 桥接工具
 - **OpenCV 互操作** - 可选的 `cv::Mat` 转换
 
 ## 快速开始
@@ -66,7 +66,7 @@ TensorN
 ├── opt<T>              链式操作的惰性求值包装器
 ├── einsum()            爱因斯坦求和引擎
 ├── operations.hpp      高级运算（matmul, dot, outer, gram, ...）
-├── static.hpp          数据 I/O（csv, npy, npz, json）
+├── static.hpp          数据 I/O（csv, npy, npz, json, pt）
 ├── BLAS/               OpenBLAS 加速后端
 │   └── blas_tensor.hpp
 └── CUDA/               CUDA/cuBLAS 加速后端
@@ -129,8 +129,25 @@ tensor.save("data.csv");   // CSV（仅 1D/2D）
 tensor.save("data.npy");   // NumPy 格式
 tensor.save("data.npz");   // NumPy 压缩格式
 tensor.save("data.json");  // JSON（包含形状和数据）
+tensor.save("data.pt");    // TensorN .pt 二进制格式（支持 .pt / .pth 扩展名）
 
-auto t = load<float>("data.npy");  // 根据扩展名自动检测
+auto t = load<float>("data.pt");  // 根据扩展名自动检测
+```
+
+**支持类型：** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`
+
+**与 PyTorch 互操作：** 使用 `tools/pt_converter.py` 可在 TensorN `.pt` 和 PyTorch `.pth` 之间相互转换：
+
+```bash
+# PyTorch .pth → TensorN .pt
+python tools/pt_converter.py torch2pt model.pth data.pt
+
+# TensorN .pt → PyTorch .pth
+python tools/pt_converter.py pt2torch data.pt model.pth
+
+# 也支持 .npy 中转
+python tools/pt_converter.py np2pt data.npy data.pt
+python tools/pt_converter.py pt2np data.pt data.npy
 ```
 
 ## 基准测试
