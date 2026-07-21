@@ -64,7 +64,7 @@ namespace TensorN
         {
             _size = cpu_tensor.size();
             allocate();
-            copyFromHost(cpu_tensor.data.data(), _size);
+            copyFromHost(cpu_tensor.data->data(), _size);
         }
 
         ~CudaTensor()
@@ -166,7 +166,7 @@ namespace TensorN
         Tensor<T> toTensor() const
         {
             Tensor<T> result(_shape);
-            copyToHost(result.data.data(), _size);
+            copyToHost(result.data->data(), _size);
             return result;
         }
 

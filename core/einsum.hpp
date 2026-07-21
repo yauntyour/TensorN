@@ -555,7 +555,7 @@ namespace TensorN
                 product *= (*tensors[i])[tensor_pos];
             }
 
-            result.data[output_pos] += product;
+            (*result.data)[output_pos] += product;
 
         } while (increment_index(iter_indices, label_limits));
 

@@ -62,12 +62,12 @@ namespace TensorN
 
                 if constexpr (std::is_same_v<T, float>)
                     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                        M, N, K, 1.0f, A.data.data(), K, B.data.data(), N,
-                        0.0f, C.data.data(), N);
+                        M, N, K, 1.0f, A.data->data(), K, B.data->data(), N,
+                        0.0f, C.data->data(), N);
                 else
                     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                        M, N, K, 1.0, A.data.data(), K, B.data.data(), N,
-                        0.0, C.data.data(), N);
+                        M, N, K, 1.0, A.data->data(), K, B.data->data(), N,
+                        0.0, C.data->data(), N);
 
                 return C;
             }
@@ -106,15 +106,15 @@ namespace TensorN
                     if constexpr (std::is_same_v<T, float>)
                         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                             static_cast<int>(M), static_cast<int>(N), static_cast<int>(K),
-                            1.0f, A.data.data() + b * M * K, static_cast<int>(K),
-                            B.data.data() + b * K * N, static_cast<int>(N),
-                            0.0f, C.data.data() + b * M * N, static_cast<int>(N));
+                            1.0f, A.data->data() + b * M * K, static_cast<int>(K),
+                            B.data->data() + b * K * N, static_cast<int>(N),
+                            0.0f, C.data->data() + b * M * N, static_cast<int>(N));
                     else
                         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                             static_cast<int>(M), static_cast<int>(N), static_cast<int>(K),
-                            1.0, A.data.data() + b * M * K, static_cast<int>(K),
-                            B.data.data() + b * K * N, static_cast<int>(N),
-                            0.0, C.data.data() + b * M * N, static_cast<int>(N));
+                            1.0, A.data->data() + b * M * K, static_cast<int>(K),
+                            B.data->data() + b * K * N, static_cast<int>(N),
+                            0.0, C.data->data() + b * M * N, static_cast<int>(N));
                 }
                 return C;
             }
@@ -141,9 +141,9 @@ namespace TensorN
                     throw std::invalid_argument("Dimension mismatch for dot product");
 
                 if constexpr (std::is_same_v<T, float>)
-                    return cblas_sdot(static_cast<int>(A.shape()[0]), A.data.data(), 1, B.data.data(), 1);
+                    return cblas_sdot(static_cast<int>(A.shape()[0]), A.data->data(), 1, B.data->data(), 1);
                 else
-                    return cblas_ddot(static_cast<int>(A.shape()[0]), A.data.data(), 1, B.data.data(), 1);
+                    return cblas_ddot(static_cast<int>(A.shape()[0]), A.data->data(), 1, B.data->data(), 1);
             }
             else
 #endif
@@ -165,9 +165,9 @@ namespace TensorN
                 if (v.shape().size() != 1)
                     throw std::invalid_argument("norm requires a 1D tensor");
                 if constexpr (std::is_same_v<T, float>)
-                    return cblas_snrm2(static_cast<int>(v.size()), v.data.data(), 1);
+                    return cblas_snrm2(static_cast<int>(v.size()), v.data->data(), 1);
                 else
-                    return cblas_dnrm2(static_cast<int>(v.size()), v.data.data(), 1);
+                    return cblas_dnrm2(static_cast<int>(v.size()), v.data->data(), 1);
             }
             else
 #endif
@@ -189,9 +189,9 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if constexpr (std::is_same_v<T, float>)
-                    return cblas_snrm2(static_cast<int>(A.size()), A.data.data(), 1);
+                    return cblas_snrm2(static_cast<int>(A.size()), A.data->data(), 1);
                 else
-                    return cblas_dnrm2(static_cast<int>(A.size()), A.data.data(), 1);
+                    return cblas_dnrm2(static_cast<int>(A.size()), A.data->data(), 1);
             }
             else
 #endif
@@ -216,9 +216,9 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if constexpr (std::is_same_v<T, float>)
-                    cblas_saxpy(static_cast<int>(x.size()), alpha, x.data.data(), 1, y.data.data(), 1);
+                    cblas_saxpy(static_cast<int>(x.size()), alpha, x.data->data(), 1, y.data->data(), 1);
                 else
-                    cblas_daxpy(static_cast<int>(x.size()), alpha, x.data.data(), 1, y.data.data(), 1);
+                    cblas_daxpy(static_cast<int>(x.size()), alpha, x.data->data(), 1, y.data->data(), 1);
                 return;
             }
 #endif
@@ -237,9 +237,9 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if constexpr (std::is_same_v<T, float>)
-                    cblas_sscal(static_cast<int>(x.size()), alpha, x.data.data(), 1);
+                    cblas_sscal(static_cast<int>(x.size()), alpha, x.data->data(), 1);
                 else
-                    cblas_dscal(static_cast<int>(x.size()), alpha, x.data.data(), 1);
+                    cblas_dscal(static_cast<int>(x.size()), alpha, x.data->data(), 1);
                 return;
             }
 #endif
@@ -264,13 +264,13 @@ namespace TensorN
 #if TENSORN_HAS_OPENBLAS
             if constexpr (detail::is_blas_type<T>::value)
             {
-                std::fill(C.data.begin(), C.data.end(), T(0));
+                std::fill(C.data->begin(), C.data->end(), T(0));
                 if constexpr (std::is_same_v<T, float>)
                     cblas_sger(CblasRowMajor, static_cast<int>(m), static_cast<int>(n),
-                        1.0f, A.data.data(), 1, B.data.data(), 1, C.data.data(), static_cast<int>(n));
+                        1.0f, A.data->data(), 1, B.data->data(), 1, C.data->data(), static_cast<int>(n));
                 else
                     cblas_dger(CblasRowMajor, static_cast<int>(m), static_cast<int>(n),
-                        1.0, A.data.data(), 1, B.data.data(), 1, C.data.data(), static_cast<int>(n));
+                        1.0, A.data->data(), 1, B.data->data(), 1, C.data->data(), static_cast<int>(n));
                 return C;
             }
 #endif
@@ -330,7 +330,7 @@ namespace TensorN
                 if (d != axis) out_shape.push_back(shape[d]);
 
             Tensor<T> result(out_shape);
-            std::fill(result.data.begin(), result.data.end(), T(0));
+            std::fill(result.data->begin(), result.data->end(), T(0));
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < axis; ++d) outer *= shape[d];
@@ -360,10 +360,10 @@ namespace TensorN
         // ================================================================
 
         template <typename T>
-        T max(const Tensor<T>& A) { return *std::max_element(A.data.begin(), A.data.end()); }
+        T max(const Tensor<T>& A) { return *std::max_element(A.data->begin(), A.data->end()); }
 
         template <typename T>
-        T min(const Tensor<T>& A) { return *std::min_element(A.data.begin(), A.data.end()); }
+        T min(const Tensor<T>& A) { return *std::min_element(A.data->begin(), A.data->end()); }
 
         // ================================================================
         // Trace
@@ -455,15 +455,15 @@ namespace TensorN
                 if constexpr (std::is_same_v<T, float>)
                     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         static_cast<int>(M), static_cast<int>(M), static_cast<int>(N),
-                        1.0f, X.data.data(), static_cast<int>(N),
-                        X.data.data(), static_cast<int>(N),
-                        0.0f, result.data.data(), static_cast<int>(M));
+                        1.0f, X.data->data(), static_cast<int>(N),
+                        X.data->data(), static_cast<int>(N),
+                        0.0f, result.data->data(), static_cast<int>(M));
                 else
                     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         static_cast<int>(M), static_cast<int>(M), static_cast<int>(N),
-                        1.0, X.data.data(), static_cast<int>(N),
-                        X.data.data(), static_cast<int>(N),
-                        0.0, result.data.data(), static_cast<int>(M));
+                        1.0, X.data->data(), static_cast<int>(N),
+                        X.data->data(), static_cast<int>(N),
+                        0.0, result.data->data(), static_cast<int>(M));
                 return result;
             }
 #endif
@@ -490,13 +490,13 @@ namespace TensorN
                 if constexpr (std::is_same_v<T, float>)
                     cblas_sgemv(CblasRowMajor, CblasNoTrans,
                         static_cast<int>(A.shape()[0]), static_cast<int>(A.shape()[1]),
-                        1.0f, A.data.data(), static_cast<int>(A.shape()[1]),
-                        y.data.data(), 1, 0.0f, temp.data.data(), 1);
+                        1.0f, A.data->data(), static_cast<int>(A.shape()[1]),
+                        y.data->data(), 1, 0.0f, temp.data->data(), 1);
                 else
                     cblas_dgemv(CblasRowMajor, CblasNoTrans,
                         static_cast<int>(A.shape()[0]), static_cast<int>(A.shape()[1]),
-                        1.0, A.data.data(), static_cast<int>(A.shape()[1]),
-                        y.data.data(), 1, 0.0, temp.data.data(), 1);
+                        1.0, A.data->data(), static_cast<int>(A.shape()[1]),
+                        y.data->data(), 1, 0.0, temp.data->data(), 1);
             }
             else
 #endif

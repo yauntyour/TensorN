@@ -81,7 +81,7 @@ namespace TensorN
             for (size_t j = 0; j < cols; ++j)
             {
                 size_t idx = (rows == 1) ? j : i * cols + j;
-                file << A.data[idx];
+                file << (*A.data)[idx];
                 if (j < cols - 1)
                     file << ",";
             }
@@ -152,7 +152,7 @@ namespace TensorN
             throw std::runtime_error("Type not supported for .npy");
         }
         std::vector<size_t> shape(_shape.begin(), _shape.end());
-        cnpy::npy_save(filename, A.data.data(), shape, "w");
+        cnpy::npy_save(filename, A.data->data(), shape, "w");
     }
 
     template <typename T>
@@ -180,7 +180,7 @@ namespace TensorN
 
         // cnpy 支持直接保存为 .npz（内部用 zlib 压缩）
         // 注意：cnpy::npz_save 要求传入 "key" 名称
-        cnpy::npz_save(filename, "arr_0", A.data.data(), shape, "w");
+        cnpy::npz_save(filename, "arr_0", A.data->data(), shape, "w");
     }
     template <typename T>
     static Tensor<T> load_npz(const std::string &filename)
@@ -252,7 +252,7 @@ namespace TensorN
             file.write(reinterpret_cast<const char *>(&dim64), sizeof(dim64));
         }
 
-        file.write(reinterpret_cast<const char *>(A.data.data()), A.data.size() * sizeof(T));
+        file.write(reinterpret_cast<const char *>(A.data->data()), A.data->size() * sizeof(T));
     }
 
     template <typename T>
@@ -319,7 +319,7 @@ namespace TensorN
         }
         nlohmann::json j;
         j["shape"] = _shape;
-        j["data"] = A.data; // json.hpp 支持 vector 序列化
+        j["data"] = *A.data;
         std::ofstream file(filename);
         file << j.dump(2); // pretty print
     }

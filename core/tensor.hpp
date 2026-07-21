@@ -86,10 +86,10 @@ namespace TensorN
         }
 
     public:
-        std::vector<T> data;
+        std::shared_ptr<std::vector<T>> data;
 
         Tensor() = default;
-        Tensor(const Tensor<T> &other) : _size(other._size), _shape(other._shape), data(other.data) {}
+        Tensor(const Tensor<T> &other) : _size(other._size), _shape(other._shape), data(std::make_shared<std::vector<T>>(*other.data)) {}
         Tensor(Tensor<T> &&other) noexcept : _size(other._size), _shape(std::move(other._shape)), data(std::move(other.data))
         {
             other._size = 0;
@@ -102,14 +102,14 @@ namespace TensorN
             {
                 _size *= e;
             }
-            data.resize(_size);
+            data = std::make_shared<std::vector<T>>(_size);
         }
-        Tensor(const std::vector<size_t> &shape, const std::vector<T> &data_vec) : _shape(shape), data(data_vec)
+        Tensor(const std::vector<size_t> &shape, const std::vector<T> &data_vec) : _shape(shape), data(std::make_shared<std::vector<T>>(data_vec))
         {
             _size = 1;
             for (auto &e : _shape)
                 _size *= e;
-            if (_size != data.size())
+            if (_size != data->size())
             {
                 throw std::invalid_argument("Shape does not match data size.");
             }
@@ -117,18 +117,56 @@ namespace TensorN
 
         ~Tensor() = default;
 
+        Tensor<T> &operator=(const Tensor<T> &other)
+        {
+            if (this != &other)
+            {
+                _size = other._size;
+                _shape = other._shape;
+                data = std::make_shared<std::vector<T>>(*other.data);
+            }
+            return *this;
+        }
+
+        Tensor<T> &operator=(Tensor<T> &&other) noexcept
+        {
+            if (this != &other)
+            {
+                _size = other._size;
+                _shape = std::move(other._shape);
+                data = std::move(other.data);
+                other._size = 0;
+                other._shape.clear();
+            }
+            return *this;
+        }
+
+        Tensor<T> clone() const
+        {
+            return Tensor<T>(*this);
+        }
+
+        Tensor<T> shallow_copy() const
+        {
+            Tensor<T> result;
+            result._size = _size;
+            result._shape = _shape;
+            result.data = data;
+            return result;
+        }
+
         size_t size() const
         {
             return _size;
         }
         // Iterators for STL compatibility
-        typename std::vector<T>::iterator begin() { return data.begin(); }
-        typename std::vector<T>::iterator end() { return data.end(); }
+        typename std::vector<T>::iterator begin() { return data->begin(); }
+        typename std::vector<T>::iterator end() { return data->end(); }
 
-        typename std::vector<T>::const_iterator begin() const { return data.begin(); }
-        typename std::vector<T>::const_iterator end() const { return data.end(); }
-        typename std::vector<T>::const_iterator cbegin() const { return data.cbegin(); }
-        typename std::vector<T>::const_iterator cend() const { return data.cend(); }
+        typename std::vector<T>::const_iterator begin() const { return data->begin(); }
+        typename std::vector<T>::const_iterator end() const { return data->end(); }
+        typename std::vector<T>::const_iterator cbegin() const { return data->cbegin(); }
+        typename std::vector<T>::const_iterator cend() const { return data->cend(); }
 
         const std::vector<size_t> &shape() const
         {
@@ -144,7 +182,7 @@ namespace TensorN
         {
             if (!is_isomorphic(B))
                 return false;
-            return data == B.data;
+            return *data == *B.data;
         }
 
         bool check_indices(const std::vector<size_t> &indices) const
@@ -179,7 +217,7 @@ namespace TensorN
             }
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] += B.data[i];
+                (*data)[i] += (*B.data)[i];
             }
             return *this;
         }
@@ -191,7 +229,7 @@ namespace TensorN
             }
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] -= B.data[i];
+                (*data)[i] -= (*B.data)[i];
             }
             return *this;
         }
@@ -203,7 +241,7 @@ namespace TensorN
             }
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] *= B.data[i];
+                (*data)[i] *= (*B.data)[i];
             }
             return *this;
         }
@@ -215,7 +253,7 @@ namespace TensorN
             }
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] /= B.data[i];
+                (*data)[i] /= (*B.data)[i];
             }
             return *this;
         }
@@ -243,7 +281,7 @@ namespace TensorN
         {
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] += B;
+                (*data)[i] += B;
             }
             return *this;
         }
@@ -251,7 +289,7 @@ namespace TensorN
         {
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] -= B;
+                (*data)[i] -= B;
             }
             return *this;
         }
@@ -259,7 +297,7 @@ namespace TensorN
         {
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] *= B;
+                (*data)[i] *= B;
             }
             return *this;
         }
@@ -267,7 +305,7 @@ namespace TensorN
         {
             for (size_t i = 0; i < _size; i++)
             {
-                data[i] /= B;
+                (*data)[i] /= B;
             }
             return *this;
         }
@@ -307,11 +345,11 @@ namespace TensorN
             {
                 throw std::out_of_range("Index out of range.");
             }
-            return data[flat_index(indices)];
+            return (*data)[flat_index(indices)];
         }
         T &operator[](size_t index)
         {
-            return data[index];
+            return (*data)[index];
         }
         const T &operator[](const std::vector<size_t> &indices) const
         {
@@ -323,11 +361,11 @@ namespace TensorN
             {
                 throw std::out_of_range("Index out of range.");
             }
-            return data[flat_index(indices)];
+            return (*data)[flat_index(indices)];
         }
         const T &operator[](size_t index) const
         {
-            return data[index];
+            return (*data)[index];
         }
         friend std::ostream &operator<<(std::ostream &os, const Tensor<T> &tensor)
         {
@@ -337,12 +375,12 @@ namespace TensorN
             }
             else if (tensor._shape.empty())
             {
-                os << tensor.data[0];
+                os << (*tensor.data)[0];
             }
             else
             {
                 std::vector<size_t> indices(tensor._shape.size(), 0);
-                tensor.format_recursive(os, tensor.data, tensor._shape, indices, 0, 0);
+                tensor.format_recursive(os, *tensor.data, tensor._shape, indices, 0, 0);
             }
             return os;
         }
@@ -432,7 +470,7 @@ namespace TensorN
     Tensor<T> zeros(const std::vector<size_t> &shape)
     {
         Tensor<T> tensor(shape);
-        std::fill(tensor.data.begin(), tensor.data.end(), T(0));
+        std::fill(tensor.data->begin(), tensor.data->end(), T(0));
         return tensor;
     }
 
@@ -440,7 +478,7 @@ namespace TensorN
     Tensor<T> ones(const std::vector<size_t> &shape)
     {
         Tensor<T> tensor(shape);
-        std::fill(tensor.data.begin(), tensor.data.end(), T(1));
+        std::fill(tensor.data->begin(), tensor.data->end(), T(1));
         return tensor;
     }
 
@@ -524,7 +562,7 @@ namespace TensorN
             throw std::invalid_argument("Unsupported data type for cv::Mat");
         }
         cv::Mat mat(rows, cols, cv_type);
-        std::copy(tensor.data.begin(), tensor.data.end(), reinterpret_cast<T *>(mat.data));
+        std::copy(tensor.data->begin(), tensor.data->end(), reinterpret_cast<T *>(mat.data));
         return mat;
     }
 #endif // OPENCV_ALL_HPP
