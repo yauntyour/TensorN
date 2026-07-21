@@ -88,26 +88,38 @@ if(TENSORN_ENABLE_OPENMP)
 endif()
 
 # ============================================================================
-# nlohmann/json (header-only, fetched automatically)
+# nlohmann/json (header-only)
 # ============================================================================
-FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(nlohmann_json)
+find_package(nlohmann_json 3.11.3 QUIET)
+if(NOT nlohmann_json_FOUND)
+    message(STATUS "nlohmann_json not found locally, fetching from GitHub...")
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG        v3.11.3
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+else()
+    message(STATUS "Found local nlohmann_json")
+endif()
 
 # ============================================================================
-# ZLIB Configuration (required for cnpy) - fetched to avoid MinGW/MSVC conflicts
+# ZLIB Configuration (required for cnpy)
 # ============================================================================
-FetchContent_Declare(
-    zlib
-    GIT_REPOSITORY https://github.com/madler/zlib.git
-    GIT_TAG        v1.3.1
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(zlib)
+find_package(ZLIB QUIET)
+if(NOT ZLIB_FOUND)
+    message(STATUS "ZLIB not found locally, fetching from GitHub...")
+    FetchContent_Declare(
+        zlib
+        GIT_REPOSITORY https://github.com/madler/zlib.git
+        GIT_TAG        v1.3.1
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(zlib)
+else()
+    message(STATUS "Found local ZLIB: ${ZLIB_VERSION}")
+endif()
 
 # ============================================================================
 # Main Library Target (Header-only)
@@ -122,7 +134,11 @@ target_include_directories(TensorN INTERFACE
 
 target_compile_features(TensorN INTERFACE cxx_std_17)
 
-target_link_libraries(TensorN INTERFACE nlohmann_json::nlohmann_json zlibstatic)
+if(ZLIB_FOUND)
+    target_link_libraries(TensorN INTERFACE nlohmann_json::nlohmann_json ZLIB::ZLIB)
+else()
+    target_link_libraries(TensorN INTERFACE nlohmann_json::nlohmann_json zlibstatic)
+endif()
 
 if(TENSORN_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
     target_link_libraries(TensorN INTERFACE OpenMP::OpenMP_CXX)
