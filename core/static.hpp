@@ -2,6 +2,7 @@
 #ifndef __STATIC__H__
 #define __STATIC__H__
 #include "tensor.hpp"
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -22,6 +23,41 @@ constexpr bool is_supported_npy_type()
            std::is_same_v<T, int32_t> ||
            std::is_same_v<T, uint8_t> ||
            std::is_same_v<T, int64_t>; // 按需扩展
+}
+
+template <typename T>
+constexpr bool is_supported_pt_type()
+{
+    return std::is_same_v<T, float> ||
+           std::is_same_v<T, double> ||
+           std::is_same_v<T, int32_t> ||
+           std::is_same_v<T, int64_t> ||
+           std::is_same_v<T, uint8_t> ||
+           std::is_same_v<T, int16_t>;
+}
+
+enum class PTDtype : uint8_t {
+    FLOAT32 = 0,
+    FLOAT64 = 1,
+    INT32   = 2,
+    INT64   = 3,
+    UINT8   = 4,
+    INT16   = 5,
+};
+
+constexpr const char PT_MAGIC[] = "TENSORPT!";
+constexpr uint32_t PT_VERSION = 1;
+
+template <typename T>
+PTDtype get_pt_dtype()
+{
+    if constexpr (std::is_same_v<T, float>)       return PTDtype::FLOAT32;
+    if constexpr (std::is_same_v<T, double>)      return PTDtype::FLOAT64;
+    if constexpr (std::is_same_v<T, int32_t>)     return PTDtype::INT32;
+    if constexpr (std::is_same_v<T, int64_t>)     return PTDtype::INT64;
+    if constexpr (std::is_same_v<T, uint8_t>)     return PTDtype::UINT8;
+    if constexpr (std::is_same_v<T, int16_t>)     return PTDtype::INT16;
+    throw std::runtime_error("Unsupported type for .pt format");
 }
 namespace TensorN
 {
@@ -186,6 +222,94 @@ namespace TensorN
     }
 
     template <typename T>
+    void save_pt(const Tensor<T> &A, const std::string &filename)
+    {
+        if (!is_supported_pt_type<T>())
+        {
+            throw std::runtime_error("Type not supported for .pt");
+        }
+        std::ofstream file(filename, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Cannot open file for writing: " + filename);
+
+        const auto &_shape = A.shape();
+        auto dtype = get_pt_dtype<T>();
+
+        file.write(PT_MAGIC, 9);
+
+        uint32_t version = PT_VERSION;
+        file.write(reinterpret_cast<const char *>(&version), sizeof(version));
+
+        uint8_t dtype_byte = static_cast<uint8_t>(dtype);
+        file.write(reinterpret_cast<const char *>(&dtype_byte), sizeof(dtype_byte));
+
+        uint32_t ndims = static_cast<uint32_t>(_shape.size());
+        file.write(reinterpret_cast<const char *>(&ndims), sizeof(ndims));
+
+        for (auto dim : _shape)
+        {
+            uint64_t dim64 = static_cast<uint64_t>(dim);
+            file.write(reinterpret_cast<const char *>(&dim64), sizeof(dim64));
+        }
+
+        file.write(reinterpret_cast<const char *>(A.data.data()), A.data.size() * sizeof(T));
+    }
+
+    template <typename T>
+    static Tensor<T> load_pt(const std::string &filename)
+    {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Cannot open file: " + filename);
+
+        char magic_buf[9];
+        file.read(magic_buf, 9);
+        if (std::memcmp(magic_buf, PT_MAGIC, 9) != 0)
+        {
+            throw std::runtime_error("Not a valid TensorN .pt file (bad magic)");
+        }
+
+        uint32_t version;
+        file.read(reinterpret_cast<char *>(&version), sizeof(version));
+        if (version != PT_VERSION)
+        {
+            throw std::runtime_error("Unsupported .pt version: " + std::to_string(version));
+        }
+
+        uint8_t dtype_byte;
+        file.read(reinterpret_cast<char *>(&dtype_byte), sizeof(dtype_byte));
+        PTDtype stored_dtype = static_cast<PTDtype>(dtype_byte);
+        PTDtype expected = get_pt_dtype<T>();
+        if (stored_dtype != expected)
+        {
+            throw std::runtime_error("Type mismatch in .pt file");
+        }
+
+        uint32_t ndims;
+        file.read(reinterpret_cast<char *>(&ndims), sizeof(ndims));
+
+        std::vector<size_t> shape(ndims);
+        size_t total = ndims == 0 ? 1 : 1;
+        for (uint32_t i = 0; i < ndims; ++i)
+        {
+            uint64_t dim;
+            file.read(reinterpret_cast<char *>(&dim), sizeof(dim));
+            shape[i] = static_cast<size_t>(dim);
+            total *= shape[i];
+        }
+
+        if (ndims == 0)
+        {
+            shape = {};
+        }
+
+        std::vector<T> data_vec(total);
+        file.read(reinterpret_cast<char *>(data_vec.data()), total * sizeof(T));
+
+        return Tensor<T>(shape, data_vec);
+    }
+
+    template <typename T>
     void save_json(const Tensor<T> &A, const std::string &filename)
     {
         auto &_shape = A.shape();
@@ -222,6 +346,10 @@ namespace TensorN
                 fmt = "npy";
             else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")
                 fmt = "npz";
+            else if (filename.size() >= 3 && filename.substr(filename.size() - 3) == ".pt")
+                fmt = "pt";
+            else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".pth")
+                fmt = "pt";
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".json")
                 fmt = "json";
             else
@@ -239,6 +367,10 @@ namespace TensorN
         else if (fmt == "npz")
         {
             return save_npz<T>(*this, filename);
+        }
+        else if (fmt == "pt")
+        {
+            save_pt<T>(*this, filename);
         }
         else if (fmt == "json")
         {
@@ -261,6 +393,10 @@ namespace TensorN
                 fmt = "npy";
             else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".npz")
                 fmt = "npz";
+            else if (filename.size() >= 3 && filename.substr(filename.size() - 3) == ".pt")
+                fmt = "pt";
+            else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".pth")
+                fmt = "pt";
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".json")
                 fmt = "json";
             else
@@ -278,6 +414,10 @@ namespace TensorN
         else if (fmt == "npz")
         {
             return load_npz<T>(filename);
+        }
+        else if (fmt == "pt")
+        {
+            return load_pt<T>(filename);
         }
         else if (fmt == "json")
         {
