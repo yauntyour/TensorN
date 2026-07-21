@@ -208,8 +208,8 @@ template <typename T>
 void softmax_2d_axis1(const CudaTensor<T>& A, CudaTensor<T>& C) {
     size_t rows = A.shape()[0], cols = A.shape()[1];
     T* d_row_max; T* d_row_sum;
-    cudaMalloc(&d_row_max, rows * sizeof(T));
-    cudaMalloc(&d_row_sum, rows * sizeof(T));
+    cudaMalloc(reinterpret_cast<void**>(&d_row_max), rows * sizeof(T));
+    cudaMalloc(reinterpret_cast<void**>(&d_row_sum), rows * sizeof(T));
     cudaMemset(d_row_sum, 0, rows * sizeof(T));
     CudaTensor<T> temp({rows, cols});
 
@@ -240,7 +240,8 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis) {
         C = CudaTensor<T>(A.shape());
         size_t n = A.size();
         T *d_max, *d_sum;
-        cudaMalloc(&d_max, sizeof(T)); cudaMalloc(&d_sum, sizeof(T));
+        cudaMalloc(reinterpret_cast<void**>(&d_max), sizeof(T));
+        cudaMalloc(reinterpret_cast<void**>(&d_sum), sizeof(T));
         cudaMemset(d_sum, 0, sizeof(T));
         CudaTensor<T> temp(A.shape());
         softmax_max<<<1,1>>>(A.device_ptr(), d_max, 1, n);
@@ -362,6 +363,15 @@ template<typename T> void elu(const CudaTensor<T>& A, T alpha, CudaTensor<T>& C)
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
+template<typename T> void transpose(const CudaTensor<T>& A, CudaTensor<T>& C) {
+    if(A.shape().size()!=2) throw std::invalid_argument("transpose requires 2D tensor");
+    size_t rows=A.shape()[0], cols=A.shape()[1];
+    if(C.shape()[0]!=cols||C.shape()[1]!=rows) throw std::invalid_argument("output shape mismatch");
+    size_t total=rows*cols, bs=256, gs=(total+bs-1)/bs;
+    kernels::transpose<<<gs,bs>>>(A.device_ptr(),C.device_ptr(),rows,cols);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
+
 #define INST(T) \
     template void add<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
     template void subtract<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
@@ -387,6 +397,7 @@ template<typename T> void elu(const CudaTensor<T>& A, T alpha, CudaTensor<T>& C)
     template void sigmoid<T>(const CudaTensor<T>&,CudaTensor<T>&); \
     template void tanh<T>(const CudaTensor<T>&,CudaTensor<T>&); \
     template void softmax<T>(const CudaTensor<T>&,CudaTensor<T>&,int); \
+    template void transpose<T>(const CudaTensor<T>&,CudaTensor<T>&); \
     template void equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
     template void not_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
     template void greater<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \

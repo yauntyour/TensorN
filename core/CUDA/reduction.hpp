@@ -48,6 +48,22 @@ namespace TensorN
         template <typename T>
         CudaTensor<int64_t> argmin(const CudaTensor<T>& A, int axis);
 
+        // Vector L2 norm
+        template <typename T>
+        T norm(const CudaTensor<T>& A);
+
+        // Frobenius norm
+        template <typename T>
+        T frobenius_norm(const CudaTensor<T>& A);
+
+        // Variance
+        template <typename T>
+        T var(const CudaTensor<T>& A);
+
+        // Standard deviation
+        template <typename T>
+        T stddev(const CudaTensor<T>& A);
+
     } // namespace cuda
 } // namespace TensorN
 

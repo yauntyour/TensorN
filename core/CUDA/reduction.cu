@@ -11,6 +11,19 @@ namespace TensorN
         template <typename T, typename Op>
         __device__ inline T device_op(T a, T b, Op) { return Op{}(a, b); }
 
+        // ---- local element-wise helpers (no cross-module dependency) ----
+        template <typename T>
+        __global__ void mul_kernel(const T* A, const T* B, T* C, size_t n) {
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < n) C[idx] = A[idx] * B[idx];
+        }
+
+        template <typename T>
+        __global__ void sub_scalar_kernel(const T* A, T s, T* C, size_t n) {
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < n) C[idx] = A[idx] - s;
+        }
+
         template <typename T>
         __global__ void reduce_kernel_sum(const T* input, T* output, size_t n)
         {
@@ -99,7 +112,7 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
-            cudaMalloc(&d_intermediate, grid_size * sizeof(T));
+            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
 
             reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -124,7 +137,7 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
-            cudaMalloc(&d_intermediate, grid_size * sizeof(T));
+            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
 
             reduce_kernel_max<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -150,7 +163,7 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
 
             T* d_intermediate;
-            cudaMalloc(&d_intermediate, grid_size * sizeof(T));
+            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
 
             reduce_kernel_min<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -430,6 +443,96 @@ namespace TensorN
         template CudaTensor<int64_t> argmax<double>(const CudaTensor<double>&, int);
         template CudaTensor<int64_t> argmin<float>(const CudaTensor<float>&, int);
         template CudaTensor<int64_t> argmin<double>(const CudaTensor<double>&, int);
+
+        // ---- norm (L2 vector norm) ----
+        template <typename T>
+        T norm(const CudaTensor<T>& A)
+        {
+            if (A.shape().size() != 1)
+                throw std::invalid_argument("norm requires a 1D tensor");
+            return frobenius_norm(A);
+        }
+
+        // ---- frobenius_norm ----
+        template <typename T>
+        T frobenius_norm(const CudaTensor<T>& A)
+        {
+            size_t n = A.size();
+            if (n == 0) return T(0);
+            CudaTensor<T> sq({n});
+            {
+                size_t bs = 256, gs = (n + bs - 1) / bs;
+                mul_kernel<<<gs, bs>>>(A.device_ptr(), A.device_ptr(), sq.device_ptr(), n);
+                CHECK_CUDA_ERROR(cudaGetLastError());
+            }
+
+            size_t block_size = 256;
+            size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            T* d_sum;
+            cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
+            reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);
+            CHECK_CUDA_ERROR(cudaGetLastError());
+
+            std::vector<T> h(grid_size);
+            cudaMemcpy(h.data(), d_sum, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
+            cudaFree(d_sum);
+
+            T sum_sq = T(0);
+            for (size_t i = 0; i < grid_size; ++i) sum_sq += h[i];
+            return std::sqrt(sum_sq);
+        }
+
+        // ---- var ----
+        template <typename T>
+        T var(const CudaTensor<T>& A)
+        {
+            T m = mean(A);
+            size_t n = A.size();
+            if (n == 0) return T(0);
+            CudaTensor<T> diff({n}), sq({n});
+
+            {
+                size_t bs = 256, gs = (n + bs - 1) / bs;
+                sub_scalar_kernel<<<gs, bs>>>(A.device_ptr(), m, diff.device_ptr(), n);
+                CHECK_CUDA_ERROR(cudaGetLastError());
+            }
+            {
+                size_t bs = 256, gs = (n + bs - 1) / bs;
+                mul_kernel<<<gs, bs>>>(diff.device_ptr(), diff.device_ptr(), sq.device_ptr(), n);
+                CHECK_CUDA_ERROR(cudaGetLastError());
+            }
+
+            size_t block_size = 256;
+            size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            T* d_sum;
+            cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
+            reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);
+            CHECK_CUDA_ERROR(cudaGetLastError());
+
+            std::vector<T> h(grid_size);
+            cudaMemcpy(h.data(), d_sum, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
+            cudaFree(d_sum);
+
+            T sum_sq = T(0);
+            for (size_t i = 0; i < grid_size; ++i) sum_sq += h[i];
+            return sum_sq / static_cast<T>(n);
+        }
+
+        // ---- stddev ----
+        template <typename T>
+        T stddev(const CudaTensor<T>& A)
+        {
+            return std::sqrt(var(A));
+        }
+
+        template float norm<float>(const CudaTensor<float>&);
+        template double norm<double>(const CudaTensor<double>&);
+        template float frobenius_norm<float>(const CudaTensor<float>&);
+        template double frobenius_norm<double>(const CudaTensor<double>&);
+        template float var<float>(const CudaTensor<float>&);
+        template double var<double>(const CudaTensor<double>&);
+        template float stddev<float>(const CudaTensor<float>&);
+        template double stddev<double>(const CudaTensor<double>&);
 
     } // namespace cuda
 } // namespace TensorN

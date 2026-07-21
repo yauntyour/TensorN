@@ -388,6 +388,254 @@ namespace TensorN
         }
     } // namespace math
 
+    // ================================================================
+    // Softmax
+    // ================================================================
+
+    template <typename T>
+    Tensor<T> softmax(const Tensor<T>& A, int axis = -1)
+    {
+        size_t ndim = A.shape().size();
+        if (axis < 0) axis = static_cast<int>(ndim) + axis;
+        if (axis < 0 || static_cast<size_t>(axis) >= ndim)
+            throw std::invalid_argument("Softmax axis out of range");
+
+        Tensor<T> result(A.shape());
+
+        if (ndim == 1) {
+            T max_val = *std::max_element(A.begin(), A.end());
+            T sum = T(0);
+            for (size_t i = 0; i < A.size(); ++i) {
+                result[i] = std::exp(A[i] - max_val);
+                sum += result[i];
+            }
+            for (size_t i = 0; i < A.size(); ++i)
+                result[i] /= sum;
+            return result;
+        }
+
+        if (ndim == 2) {
+            size_t rows = A.shape()[0], cols = A.shape()[1];
+            if (axis == 1) {
+                for (size_t r = 0; r < rows; ++r) {
+                    T max_val = A[{r, 0}];
+                    for (size_t c = 1; c < cols; ++c)
+                        if (A[{r, c}] > max_val) max_val = A[{r, c}];
+                    T sum = T(0);
+                    for (size_t c = 0; c < cols; ++c) {
+                        result[{r, c}] = std::exp(A[{r, c}] - max_val);
+                        sum += result[{r, c}];
+                    }
+                    for (size_t c = 0; c < cols; ++c)
+                        result[{r, c}] /= sum;
+                }
+                return result;
+            }
+            if (axis == 0) {
+                for (size_t c = 0; c < cols; ++c) {
+                    T max_val = A[{0, c}];
+                    for (size_t r = 1; r < rows; ++r)
+                        if (A[{r, c}] > max_val) max_val = A[{r, c}];
+                    T sum = T(0);
+                    for (size_t r = 0; r < rows; ++r) {
+                        result[{r, c}] = std::exp(A[{r, c}] - max_val);
+                        sum += result[{r, c}];
+                    }
+                    for (size_t r = 0; r < rows; ++r)
+                        result[{r, c}] /= sum;
+                }
+                return result;
+            }
+        }
+        throw std::runtime_error("Softmax: only 1D/2D supported");
+    }
+
+    // ================================================================
+    // Argmax / Argmin
+    // ================================================================
+
+    template <typename T>
+    Tensor<int64_t> argmax(const Tensor<T>& A, int axis = -1)
+    {
+        const auto& shape = A.shape();
+        size_t ndim = shape.size();
+        if (axis < 0) axis = static_cast<int>(ndim) + axis;
+        if (axis < 0 || static_cast<size_t>(axis) >= ndim)
+            throw std::invalid_argument("Argmax axis out of range");
+
+        size_t outer = 1, reduce_dim = shape[axis], inner = 1;
+        for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
+        for (size_t d = static_cast<size_t>(axis) + 1; d < ndim; ++d) inner *= shape[d];
+
+        std::vector<size_t> out_shape;
+        for (size_t d = 0; d < ndim; ++d)
+            if (d != static_cast<size_t>(axis)) out_shape.push_back(shape[d]);
+
+        Tensor<int64_t> result(out_shape);
+        for (size_t o = 0; o < outer; ++o) {
+            for (size_t i = 0; i < inner; ++i) {
+                int64_t best_idx = 0;
+                T best_val = A[o * reduce_dim * inner + i];
+                for (size_t r = 1; r < reduce_dim; ++r) {
+                    T v = A[o * reduce_dim * inner + r * inner + i];
+                    if (v > best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
+                }
+                result[o * inner + i] = best_idx;
+            }
+        }
+        return result;
+    }
+
+    template <typename T>
+    Tensor<int64_t> argmin(const Tensor<T>& A, int axis = -1)
+    {
+        const auto& shape = A.shape();
+        size_t ndim = shape.size();
+        if (axis < 0) axis = static_cast<int>(ndim) + axis;
+        if (axis < 0 || static_cast<size_t>(axis) >= ndim)
+            throw std::invalid_argument("Argmin axis out of range");
+
+        size_t outer = 1, reduce_dim = shape[axis], inner = 1;
+        for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
+        for (size_t d = static_cast<size_t>(axis) + 1; d < ndim; ++d) inner *= shape[d];
+
+        std::vector<size_t> out_shape;
+        for (size_t d = 0; d < ndim; ++d)
+            if (d != static_cast<size_t>(axis)) out_shape.push_back(shape[d]);
+
+        Tensor<int64_t> result(out_shape);
+        for (size_t o = 0; o < outer; ++o) {
+            for (size_t i = 0; i < inner; ++i) {
+                int64_t best_idx = 0;
+                T best_val = A[o * reduce_dim * inner + i];
+                for (size_t r = 1; r < reduce_dim; ++r) {
+                    T v = A[o * reduce_dim * inner + r * inner + i];
+                    if (v < best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
+                }
+                result[o * inner + i] = best_idx;
+            }
+        }
+        return result;
+    }
+
+    // ================================================================
+    // Comparison operations
+    // ================================================================
+
+    template <typename T>
+    Tensor<int> equal(const Tensor<T>& A, const Tensor<T>& B)
+    {
+        if (!A.is_isomorphic(B))
+            throw std::invalid_argument("Tensors must have same shape for equal");
+        Tensor<int> result(A.shape());
+        for (size_t i = 0; i < A.size(); ++i)
+            result[i] = (A[i] == B[i]) ? 1 : 0;
+        return result;
+    }
+
+    template <typename T>
+    Tensor<int> greater(const Tensor<T>& A, const Tensor<T>& B)
+    {
+        if (!A.is_isomorphic(B))
+            throw std::invalid_argument("Tensors must have same shape for greater");
+        Tensor<int> result(A.shape());
+        for (size_t i = 0; i < A.size(); ++i)
+            result[i] = (A[i] > B[i]) ? 1 : 0;
+        return result;
+    }
+
+    // ================================================================
+    // 2D Convolution (Native)
+    // ================================================================
+
+    template <typename T>
+    Tensor<T> conv2d(const Tensor<T>& input, const Tensor<T>& weight,
+                     const Tensor<T>& bias, int stride = 1, int padding = 0)
+    {
+        if (input.shape().size() != 4 || weight.shape().size() != 4)
+            throw std::invalid_argument("conv2d: input and weight must be 4D");
+        if (bias.shape().size() != 1)
+            throw std::invalid_argument("conv2d: bias must be 1D");
+
+        size_t N = input.shape()[0], C = input.shape()[1];
+        size_t H = input.shape()[2], W = input.shape()[3];
+        size_t K = weight.shape()[0];
+        size_t kH = weight.shape()[2], kW = weight.shape()[3];
+
+        int64_t oH = static_cast<int64_t>((H + 2 * padding - kH) / stride) + 1;
+        int64_t oW = static_cast<int64_t>((W + 2 * padding - kW) / stride) + 1;
+
+        Tensor<T> output({N, K, static_cast<size_t>(oH), static_cast<size_t>(oW)});
+
+        for (size_t n = 0; n < N; ++n)
+            for (size_t k = 0; k < K; ++k)
+                for (size_t oh = 0; oh < static_cast<size_t>(oH); ++oh)
+                    for (size_t ow = 0; ow < static_cast<size_t>(oW); ++ow) {
+                        T val = bias[k];
+                        for (size_t c = 0; c < C; ++c)
+                            for (size_t kh = 0; kh < kH; ++kh)
+                                for (size_t kw = 0; kw < kW; ++kw) {
+                                    int64_t ih = static_cast<int64_t>(oh * stride + kh) - padding;
+                                    int64_t iw = static_cast<int64_t>(ow * stride + kw) - padding;
+                                    if (ih >= 0 && ih < static_cast<int64_t>(H) &&
+                                        iw >= 0 && iw < static_cast<int64_t>(W))
+                                        val += input[{n, c, static_cast<size_t>(ih), static_cast<size_t>(iw)}]
+                                             * weight[{k, c, kh, kw}];
+                                }
+                        output[{n, k, oh, ow}] = val;
+                    }
+        return output;
+    }
+
+    // ================================================================
+    // Transposed 2D Convolution (Native)
+    // ================================================================
+
+    template <typename T>
+    Tensor<T> conv_transpose2d(const Tensor<T>& input, const Tensor<T>& weight,
+                               const Tensor<T>& bias, int stride = 1, int padding = 0)
+    {
+        if (input.shape().size() != 4 || weight.shape().size() != 4)
+            throw std::invalid_argument("conv_transpose2d: input and weight must be 4D");
+        if (bias.shape().size() != 1)
+            throw std::invalid_argument("conv_transpose2d: bias must be 1D");
+
+        size_t N = input.shape()[0], C = input.shape()[1];
+        size_t H = input.shape()[2], W = input.shape()[3];
+        size_t K = weight.shape()[0];
+        size_t kH = weight.shape()[2], kW = weight.shape()[3];
+
+        size_t oH = (H - 1) * stride + kH - 2 * padding;
+        size_t oW = (W - 1) * stride + kW - 2 * padding;
+
+        Tensor<T> output({N, K, oH, oW});
+
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < C; ++c)
+                for (size_t h = 0; h < H; ++h)
+                    for (size_t w = 0; w < W; ++w) {
+                        T in_val = input[{n, c, h, w}];
+                        for (size_t k = 0; k < K; ++k)
+                            for (size_t kh = 0; kh < kH; ++kh)
+                                for (size_t kw = 0; kw < kW; ++kw) {
+                                    int64_t oh = static_cast<int64_t>(h * stride + kh) - padding;
+                                    int64_t ow = static_cast<int64_t>(w * stride + kw) - padding;
+                                    if (oh >= 0 && oh < static_cast<int64_t>(oH) &&
+                                        ow >= 0 && ow < static_cast<int64_t>(oW))
+                                        output[{n, k, static_cast<size_t>(oh), static_cast<size_t>(ow)}]
+                                            += in_val * weight[{k, c, kh, kw}];
+                                }
+                    }
+
+        for (size_t n = 0; n < N; ++n)
+            for (size_t k = 0; k < K; ++k)
+                for (size_t oh = 0; oh < oH; ++oh)
+                    for (size_t ow = 0; ow < oW; ++ow)
+                        output[{n, k, oh, ow}] += bias[k];
+
+        return output;
+    }
+
 }
 
 #endif // !__OPERATIONS__H__

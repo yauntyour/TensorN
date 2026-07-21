@@ -61,6 +61,10 @@ namespace TensorN
         template <typename T>
         void clip(const CudaTensor<T>& A, T min_val, T max_val, CudaTensor<T>& C);
 
+        // Transpose 2D
+        template <typename T>
+        void transpose(const CudaTensor<T>& A, CudaTensor<T>& C);
+
         // Activation functions
         template <typename T>
         void relu(const CudaTensor<T>& A, CudaTensor<T>& C);
