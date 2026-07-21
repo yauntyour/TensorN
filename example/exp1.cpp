@@ -1,4 +1,4 @@
-#include "Tensor.hpp"
+#include "TensorN.hpp"
 #include <iostream>
 
 int main()

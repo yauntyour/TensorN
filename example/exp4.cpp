@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-#include "Tensor.hpp"
+#include "TensorN.hpp"
 
 using namespace TensorN;
 

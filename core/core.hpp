@@ -2,7 +2,7 @@
 #ifndef __CORE__H__
 #define __CORE__H__
 
-#include "tensor.hpp"
+#include "TensorN.hpp"
 #include "einsum.hpp"
 #include "operations.hpp"
 #include "static.hpp"

@@ -2,7 +2,7 @@
 #ifndef __CUDA_TENSOR_HPP__
 #define __CUDA_TENSOR_HPP__
 
-#include "../tensor.hpp"
+#include "core/tensor.hpp"
 #include <cuda_runtime.h>
 #include <vector>
 #include <stdexcept>
