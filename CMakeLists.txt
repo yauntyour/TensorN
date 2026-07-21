@@ -13,6 +13,7 @@ project(TensorN
 # ============================================================================
 option(TENSORN_ENABLE_CUDA "Enable CUDA support" ON)
 option(TENSORN_ENABLE_OPENBLAS "Enable OpenBlas support" ON)
+option(TENSORN_ENABLE_OPENMP "Enable OpenMP support" ON)
 option(TENSORN_BUILD_EXAMPLES "Build example programs" ON)
 option(TENSORN_BUILD_BENCHMARKS "Build benchmark programs" ON)
 
@@ -74,6 +75,19 @@ if(TENSORN_ENABLE_OPENBLAS)
 endif()
 
 # ============================================================================
+# OpenMP Configuration
+# ============================================================================
+if(TENSORN_ENABLE_OPENMP)
+    find_package(OpenMP QUIET)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "Found OpenMP: ${OpenMP_CXX_VERSION}")
+    else()
+        message(WARNING "OpenMP not found. Multi-core CPU optimization disabled.")
+        set(TENSORN_ENABLE_OPENMP OFF)
+    endif()
+endif()
+
+# ============================================================================
 # nlohmann/json (header-only, fetched automatically)
 # ============================================================================
 FetchContent_Declare(
@@ -110,6 +124,11 @@ target_compile_features(TensorN INTERFACE cxx_std_17)
 
 target_link_libraries(TensorN INTERFACE nlohmann_json::nlohmann_json zlibstatic)
 
+if(TENSORN_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
+    target_link_libraries(TensorN INTERFACE OpenMP::OpenMP_CXX)
+    target_compile_definitions(TensorN INTERFACE TENSORN_HAS_OPENMP=1)
+endif()
+
 # ============================================================================
 # CUDA Source Files
 # ============================================================================
@@ -120,6 +139,7 @@ if(TENSORN_ENABLE_CUDA)
         core/CUDA/reduction.cu
         core/CUDA/matmul.cu
         core/CUDA/convolution.cu
+        core/CUDA/fused_kernels.cu
     )
     
     # Create CUDA static library
@@ -165,6 +185,11 @@ if(TENSORN_ENABLE_OPENBLAS AND OpenBLAS_FOUND)
         target_include_directories(TensorN_CUDA PUBLIC ${OpenBLAS_INCLUDE_DIRS})
         target_link_libraries(TensorN_CUDA PUBLIC ${OpenBLAS_LIBRARIES})
     endif()
+endif()
+
+if(TENSORN_ENABLE_OPENMP AND OpenMP_CXX_FOUND AND TENSORN_ENABLE_CUDA)
+    target_link_libraries(TensorN_CUDA PUBLIC OpenMP::OpenMP_CXX)
+    target_compile_definitions(TensorN_CUDA PUBLIC TENSORN_HAS_OPENMP=1)
 endif()
 
 # ============================================================================
@@ -230,6 +255,7 @@ if(TENSORN_ENABLE_CUDA)
     message(STATUS "  CUDA Architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 endif()
 message(STATUS "  OpenBlas Support:   ${TENSORN_ENABLE_OPENBLAS}")
+message(STATUS "  OpenMP Support:     ${TENSORN_ENABLE_OPENMP}")
 message(STATUS "  Build Examples:     ${TENSORN_BUILD_EXAMPLES}")
 message(STATUS "  Build Benchmarks:   ${TENSORN_BUILD_BENCHMARKS}")
 message(STATUS "")

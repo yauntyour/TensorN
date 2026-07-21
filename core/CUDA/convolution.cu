@@ -108,7 +108,8 @@ namespace TensorN
                    const CudaTensor<T>& bias,
                    CudaTensor<T>& output,
                    int stride,
-                   int padding)
+                   int padding,
+                   cudaStream_t stream)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
                 throw std::invalid_argument("conv2d requires 4D tensors");
@@ -135,7 +136,7 @@ namespace TensorN
 
             size_t bias_size = bias.size();
 
-            conv2d_kernel<<<grid_size, block_size>>>(
+            conv2d_kernel<<<grid_size, block_size, 0, stream>>>(
                 input.device_ptr(), weight.device_ptr(),
                 bias_size > 0 ? bias.device_ptr() : nullptr,
                 output.device_ptr(),
@@ -149,12 +150,23 @@ namespace TensorN
         template <typename T>
         void conv2d(const CudaTensor<T>& input,
                    const CudaTensor<T>& weight,
+                   const CudaTensor<T>& bias,
+                   CudaTensor<T>& output,
+                   int stride,
+                   int padding)
+        {
+            conv2d(input, weight, bias, output, stride, padding, nullptr);
+        }
+
+        template <typename T>
+        void conv2d(const CudaTensor<T>& input,
+                   const CudaTensor<T>& weight,
                    CudaTensor<T>& output,
                    int stride,
                    int padding)
         {
             CudaTensor<T> empty_bias;
-            conv2d(input, weight, empty_bias, output, stride, padding);
+            conv2d(input, weight, empty_bias, output, stride, padding, nullptr);
         }
 
         template <typename T>
@@ -174,7 +186,8 @@ namespace TensorN
                              const CudaTensor<T>& bias,
                              CudaTensor<T>& output,
                              int stride,
-                             int padding)
+                             int padding,
+                             cudaStream_t stream)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
                 throw std::invalid_argument("conv_transpose2d requires 4D tensors");
@@ -199,7 +212,7 @@ namespace TensorN
             size_t block_size = 256;
             size_t grid_size = (total + block_size - 1) / block_size;
 
-            conv_transpose2d_kernel<<<grid_size, block_size>>>(
+            conv_transpose2d_kernel<<<grid_size, block_size, 0, stream>>>(
                 input.device_ptr(), weight.device_ptr(), output.device_ptr(),
                 batch, in_channels, out_channels, in_height, in_width,
                 kernel_h, kernel_w, out_height, out_width, stride, padding);
@@ -208,18 +221,33 @@ namespace TensorN
 
             if (bias.size() > 0)
             {
-                bias_add_kernel<<<grid_size, block_size>>>(output.device_ptr(), bias.device_ptr(),
+                bias_add_kernel<<<grid_size, block_size, 0, stream>>>(output.device_ptr(), bias.device_ptr(),
                     batch, out_channels, out_height, out_width);
                 CHECK_CUDA_ERROR(cudaGetLastError());
             }
         }
 
+        template <typename T>
+        void conv_transpose2d(const CudaTensor<T>& input,
+                             const CudaTensor<T>& weight,
+                             const CudaTensor<T>& bias,
+                             CudaTensor<T>& output,
+                             int stride,
+                             int padding)
+        {
+            conv_transpose2d(input, weight, bias, output, stride, padding, nullptr);
+        }
+
         template void conv2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int);
         template void conv2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int);
+        template void conv2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int, cudaStream_t);
+        template void conv2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int, cudaStream_t);
         template void conv2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int);
         template void conv2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int);
         template void conv_transpose2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int);
         template void conv_transpose2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int);
+        template void conv_transpose2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int, cudaStream_t);
+        template void conv_transpose2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int, cudaStream_t);
 
     } // namespace cuda
 } // namespace TensorN

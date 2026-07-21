@@ -3,16 +3,12 @@
 #define __CONVOLUTION_HPP__
 
 #include "cuda_tensor.hpp"
+#include "cuda_stream.hpp"
 
 namespace TensorN
 {
     namespace cuda
     {
-        // 2D Convolution
-        // Input: (batch, in_channels, height, width)
-        // Weight: (out_channels, in_channels, kernel_h, kernel_w)
-        // Bias: (out_channels)
-        // Output: (batch, out_channels, out_height, out_width)
         template <typename T>
         void conv2d(const CudaTensor<T>& input, 
                    const CudaTensor<T>& weight,
@@ -21,7 +17,15 @@ namespace TensorN
                    int stride = 1,
                    int padding = 0);
 
-        // 2D Convolution without bias
+        template <typename T>
+        void conv2d(const CudaTensor<T>& input, 
+                   const CudaTensor<T>& weight,
+                   const CudaTensor<T>& bias,
+                   CudaTensor<T>& output,
+                   int stride,
+                   int padding,
+                   cudaStream_t stream);
+
         template <typename T>
         void conv2d(const CudaTensor<T>& input,
                    const CudaTensor<T>& weight,
@@ -29,7 +33,6 @@ namespace TensorN
                    int stride = 1,
                    int padding = 0);
 
-        // 2D Transposed Convolution (Deconvolution)
         template <typename T>
         void conv_transpose2d(const CudaTensor<T>& input,
                              const CudaTensor<T>& weight,
@@ -37,6 +40,15 @@ namespace TensorN
                              CudaTensor<T>& output,
                              int stride = 1,
                              int padding = 0);
+
+        template <typename T>
+        void conv_transpose2d(const CudaTensor<T>& input,
+                             const CudaTensor<T>& weight,
+                             const CudaTensor<T>& bias,
+                             CudaTensor<T>& output,
+                             int stride,
+                             int padding,
+                             cudaStream_t stream);
 
     } // namespace cuda
 } // namespace TensorN

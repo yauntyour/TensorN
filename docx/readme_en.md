@@ -14,6 +14,10 @@
     <a href="#-build">Build</a> ·
     <a href="#-architecture">Architecture</a> ·
     <a href="#-operations">Operations</a> ·
+    <a href="#-in-place-operations">In-place</a> ·
+    <a href="#-zero-copy-views--memory-pool">Zero-Copy</a> ·
+    <a href="#cuda-streams--async">CUDA Streams</a> ·
+    <a href="#-fused-kernels">Fused Kernels</a> ·
     <a href="#-benchmark">Benchmark</a> ·
     <a href="#-dependencies">Dependencies</a>
   </p>
@@ -32,6 +36,10 @@
 - **Rich operation set** — linear algebra, element-wise math, activations, reductions, convolution
 - **Data I/O** — CSV, NumPy `.npy`/`.npz`, JSON, PyTorch `.pt` formats, with TensorN↔PyTorch bridge tool
 - **OpenCV interop** — optional `cv::Mat` conversion
+- **In-place operations** — `add_()`, `sub_()`, `mul_()`, `div_()`, `apply_()`, `fill_()`, `zero_()` for zero-allocation transforms
+- **Zero-copy views** — `view()`, `reshape()` share underlying data, no copy
+- **CUDA streams & async** — stream-aware cuBLAS, async transfers, memory pools, and fused kernels
+- **OpenBLAS multi-core** — OpenMP parallelism across all non-BLAS loops, im2col+GEMM convolution
 
 ---
 
@@ -93,14 +101,17 @@ TensorN
 ├── einsum()           Einstein summation engine
 ├── operations.hpp     High-level ops (matmul, dot, outer, gram, ...)
 ├── static.hpp         Data I/O (csv, npy, npz, json, pt)
-├── BLAS/              OpenBLAS accelerated backend
+├── memory_pool.hpp    CPU memory pool (bucket allocator, PooledAllocator, PooledVector)
+├── BLAS/              OpenBLAS accelerated backend (OpenMP multi-core, im2col+GEMM conv)
 │   └── blas_tensor.hpp
 └── CUDA/              CUDA/cuBLAS accelerated backend
-    ├── cuda_tensor.hpp   CudaTensor<T> (device memory management)
-    ├── matmul.cu         Matrix multiplication (cuBLAS)
-    ├── elementwise.cu    Element-wise & activation kernels
-    ├── reduction.cu      Reduction kernels (sum, mean, max, ...)
-    └── convolution.cu    Conv2d / ConvTranspose2d kernels
+    ├── cuda_tensor.hpp    CudaTensor<T> (device memory, async transfers, zero-copy views)
+    ├── cuda_stream.hpp    CudaStream, CudaEvent, stream pool, device/pinned memory pools
+    ├── fused_kernels.hpp  Fused kernels (matmul+activation, conv+activation, add_relu, etc.)
+    ├── matmul.cu          Matrix multiplication (cuBLAS, stream-aware)
+    ├── elementwise.cu     Element-wise & activation kernels
+    ├── reduction.cu       Reduction kernels (sum, mean, max, ...)
+    └── convolution.cu     Conv2d / ConvTranspose2d kernels
 ```
 
 ### Backends
@@ -177,6 +188,58 @@ python tools/pt_converter.py pt2torch data.pt model.pth
 python tools/pt_converter.py np2pt data.npy data.pt
 python tools/pt_converter.py pt2np data.pt data.npy
 ```
+
+---
+
+## ⚡ In-place Operations
+
+Zero-allocation in-place transforms on both `Tensor` and `CudaTensor`:
+
+```cpp
+Tensor<float> t({2, 3}, {1, 2, 3, 4, 5, 6});
+t.add_(2.0f);          // add 2 to every element
+t.mul_(0.5f);          // multiply every element by 0.5
+t.apply_([](float x) { return x * x; });  // custom element-wise transform
+t.zero_();             // fill with zeros
+```
+
+## 🔄 Zero-Copy Views & Memory Pool
+
+- **`view(shape)` / `reshape(shape)`** — returns a new tensor sharing underlying data, no allocation
+- **`memory_pool.hpp`** — CPU bucket allocator providing `PooledAllocator<T>` and `PooledVector<T>`
+- **`from_pool(shape, pool)`** — allocate a tensor from a memory pool
+
+## 🌊 CUDA Streams & Async
+
+All CUDA operations provide `cudaStream_t` overloads for efficient pipelining with stream pools and async memory pools:
+
+```cpp
+auto stream = CudaStreamPool::acquire();
+auto a_dev = CudaTensor<float>::fromPinned(a_host, stream);
+auto b_dev = CudaTensor<float>::fromPinned(b_host, stream);
+auto c_dev = matmul(a_dev, b_dev, stream);        // stream-aware cuBLAS
+c_dev.copyToHostAsync(result, stream);             // async transfer back
+stream.sync();
+```
+
+- **`CudaStreamPool`** — pre-created CUDA stream reuse
+- **`CudaMemoryPool` / `PinnedMemoryPool`** — device and pinned host memory pools
+- **`copyFromHostAsync()` / `copyToHostAsync()` / `copyFromDeviceAsync()`** — async data transfers
+- **`memset_zero_async()`** — async zero initialization
+- **`view()` / `reshape()`** — device-side zero-copy views
+
+## 🔥 Fused Kernels
+
+Eliminate intermediate buffers by combining operations in a single kernel:
+
+| Fused Op | Description |
+|---|---|
+| `fused_matmul_relu(A, B)` | Matrix multiply + ReLU activation |
+| `fused_conv_relu(input, kernel, bias)` | Conv2d + Bias + ReLU |
+| `fused_add_relu(A, B)` | Element-wise add + ReLU |
+| `fused_mul_add(A, B, C)` | Element-wise multiply + add |
+| `fused_batchnorm_inference(x, gamma, beta, mean, var)` | Inference batchnorm |
+| `fused_residual_block(x, w1, w2, ...)` | Residual block (MLP/conv) |
 
 ---
 

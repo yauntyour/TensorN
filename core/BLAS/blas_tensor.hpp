@@ -23,9 +23,14 @@
 #endif
 #endif
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <cmath>
 #include <algorithm>
 #include <type_traits>
+#include <cstring>
 
 namespace TensorN
 {
@@ -36,6 +41,15 @@ namespace TensorN
             template <typename T>
             struct is_blas_type : std::bool_constant<
                 std::is_same_v<T, float> || std::is_same_v<T, double>> {};
+
+            inline int get_num_threads()
+            {
+#ifdef _OPENMP
+                return omp_get_max_threads();
+#else
+                return 1;
+#endif
+            }
         }
 
         // ================================================================
@@ -294,9 +308,12 @@ namespace TensorN
             {
                 size_t rows = shape[0], cols = shape[1];
                 Tensor<T> result({cols, rows});
-                for (size_t i = 0; i < rows; ++i)
-                    for (size_t j = 0; j < cols; ++j)
-                        result[{j, i}] = A[{i, j}];
+                const T* __restrict src = A.data->data();
+                T* __restrict dst = result.data->data();
+                #pragma omp parallel for schedule(static)
+                for (int64_t i = 0; i < static_cast<int64_t>(rows); ++i)
+                    for (int64_t j = 0; j < static_cast<int64_t>(cols); ++j)
+                        dst[j * rows + i] = src[i * cols + j];
                 return result;
             }
 
@@ -314,7 +331,10 @@ namespace TensorN
         T sum(const Tensor<T>& A)
         {
             T result = T(0);
-            for (size_t i = 0; i < A.size(); ++i) result += A[i];
+            const T* __restrict src = A.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for reduction(+:result) schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) result += src[i];
             return result;
         }
 
@@ -336,10 +356,19 @@ namespace TensorN
             for (size_t d = 0; d < axis; ++d) outer *= shape[d];
             for (size_t d = axis + 1; d < shape.size(); ++d) inner *= shape[d];
 
-            for (size_t o = 0; o < outer; ++o)
+            const T* __restrict src = A.data->data();
+            T* __restrict dst = result.data->data();
+
+            #pragma omp parallel for schedule(static)
+            for (int64_t oi = 0; oi < static_cast<int64_t>(outer * inner); ++oi)
+            {
+                size_t o = static_cast<size_t>(oi) / inner;
+                size_t i = static_cast<size_t>(oi) % inner;
+                T s = T(0);
                 for (size_t r = 0; r < reduce_dim; ++r)
-                    for (size_t i = 0; i < inner; ++i)
-                        result[o * inner + i] += A[o * reduce_dim * inner + r * inner + i];
+                    s += src[o * reduce_dim * inner + r * inner + i];
+                dst[o * inner + i] = s;
+            }
 
             return result;
         }
@@ -389,7 +418,12 @@ namespace TensorN
             if (!A.is_isomorphic(B))
                 throw std::invalid_argument("Tensors must have same shape for Hadamard product");
             Tensor<T> result(A.shape());
-            for (size_t i = 0; i < A.size(); ++i) result[i] = A[i] * B[i];
+            const T* __restrict a = A.data->data();
+            const T* __restrict b = B.data->data();
+            T* __restrict c = result.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) c[i] = a[i] * b[i];
             return result;
         }
 
@@ -402,7 +436,10 @@ namespace TensorN
         {
             T m = blas::mean(A);
             T sum_sq = T(0);
-            for (size_t i = 0; i < A.size(); ++i) { T d = A[i] - m; sum_sq += d * d; }
+            const T* __restrict src = A.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for reduction(+:sum_sq) schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) { T d = src[i] - m; sum_sq += d * d; }
             return sum_sq / static_cast<T>(A.size());
         }
 
@@ -519,8 +556,21 @@ namespace TensorN
         Tensor<T> apply(const Tensor<T>& A, Func func)
         {
             Tensor<T> result(A.shape());
-            for (size_t i = 0; i < A.size(); ++i) result[i] = func(A[i]);
+            const T* __restrict src = A.data->data();
+            T* __restrict dst = result.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) dst[i] = func(src[i]);
             return result;
+        }
+
+        template <typename T, typename Func>
+        void apply_inplace(Tensor<T>& A, Func func)
+        {
+            T* __restrict dst = A.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) dst[i] = func(dst[i]);
         }
 
         template <typename T>
@@ -580,7 +630,12 @@ namespace TensorN
             if (!A.is_isomorphic(B))
                 throw std::invalid_argument("Tensors must have same shape for addition");
             Tensor<T> result(A.shape());
-            for (size_t i = 0; i < A.size(); ++i) result[i] = A[i] + B[i];
+            const T* __restrict a = A.data->data();
+            const T* __restrict b = B.data->data();
+            T* __restrict c = result.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) c[i] = a[i] + b[i];
             return result;
         }
 
@@ -601,44 +656,51 @@ namespace TensorN
             if (ndim == 1) {
                 T max_val = blas::max(A);
                 T sum = T(0);
-                for (size_t i = 0; i < A.size(); ++i) {
-                    result[i] = std::exp(A[i] - max_val);
-                    sum += result[i];
+                T* __restrict dst = result.data->data();
+                const T* __restrict src = A.data->data();
+                size_t n = A.size();
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = std::exp(src[i] - max_val);
+                    sum += dst[i];
                 }
-                for (size_t i = 0; i < A.size(); ++i)
-                    result[i] /= sum;
+                #pragma omp parallel for schedule(static)
+                for (int64_t i = 0; i < static_cast<int64_t>(n); ++i) dst[i] /= sum;
                 return result;
             }
 
             if (ndim == 2) {
                 size_t rows = A.shape()[0], cols = A.shape()[1];
+                const T* __restrict src = A.data->data();
+                T* __restrict dst = result.data->data();
                 if (axis == 1) {
-                    for (size_t r = 0; r < rows; ++r) {
-                        T max_val = A[{r, 0}];
+                    #pragma omp parallel for schedule(static)
+                    for (int64_t r = 0; r < static_cast<int64_t>(rows); ++r) {
+                        T max_val = src[r * cols];
                         for (size_t c = 1; c < cols; ++c)
-                            if (A[{r, c}] > max_val) max_val = A[{r, c}];
+                            if (src[r * cols + c] > max_val) max_val = src[r * cols + c];
                         T sum = T(0);
                         for (size_t c = 0; c < cols; ++c) {
-                            result[{r, c}] = std::exp(A[{r, c}] - max_val);
-                            sum += result[{r, c}];
+                            dst[r * cols + c] = std::exp(src[r * cols + c] - max_val);
+                            sum += dst[r * cols + c];
                         }
                         for (size_t c = 0; c < cols; ++c)
-                            result[{r, c}] /= sum;
+                            dst[r * cols + c] /= sum;
                     }
                     return result;
                 }
                 if (axis == 0) {
-                    for (size_t c = 0; c < cols; ++c) {
-                        T max_val = A[{0, c}];
+                    #pragma omp parallel for schedule(static)
+                    for (int64_t c = 0; c < static_cast<int64_t>(cols); ++c) {
+                        T max_val = src[c];
                         for (size_t r = 1; r < rows; ++r)
-                            if (A[{r, c}] > max_val) max_val = A[{r, c}];
+                            if (src[r * cols + c] > max_val) max_val = src[r * cols + c];
                         T sum = T(0);
                         for (size_t r = 0; r < rows; ++r) {
-                            result[{r, c}] = std::exp(A[{r, c}] - max_val);
-                            sum += result[{r, c}];
+                            dst[r * cols + c] = std::exp(src[r * cols + c] - max_val);
+                            sum += dst[r * cols + c];
                         }
                         for (size_t r = 0; r < rows; ++r)
-                            result[{r, c}] /= sum;
+                            dst[r * cols + c] /= sum;
                     }
                     return result;
                 }
@@ -669,16 +731,20 @@ namespace TensorN
                 if (d != static_cast<size_t>(axis)) out_shape.push_back(shape[d]);
 
             Tensor<int64_t> result(out_shape);
-            for (size_t o = 0; o < outer; ++o) {
-                for (size_t i = 0; i < inner; ++i) {
-                    int64_t best_idx = 0;
-                    T best_val = A[o * reduce_dim * inner + i];
-                    for (size_t r = 1; r < reduce_dim; ++r) {
-                        T v = A[o * reduce_dim * inner + r * inner + i];
-                        if (v > best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
-                    }
-                    result[o * inner + i] = best_idx;
+            const T* __restrict src = A.data->data();
+            int64_t* __restrict dst = result.data->data();
+
+            #pragma omp parallel for schedule(static)
+            for (int64_t oi = 0; oi < static_cast<int64_t>(outer * inner); ++oi) {
+                size_t o = static_cast<size_t>(oi) / inner;
+                size_t i = static_cast<size_t>(oi) % inner;
+                int64_t best_idx = 0;
+                T best_val = src[o * reduce_dim * inner + i];
+                for (size_t r = 1; r < reduce_dim; ++r) {
+                    T v = src[o * reduce_dim * inner + r * inner + i];
+                    if (v > best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
                 }
+                dst[o * inner + i] = best_idx;
             }
             return result;
         }
@@ -701,16 +767,20 @@ namespace TensorN
                 if (d != static_cast<size_t>(axis)) out_shape.push_back(shape[d]);
 
             Tensor<int64_t> result(out_shape);
-            for (size_t o = 0; o < outer; ++o) {
-                for (size_t i = 0; i < inner; ++i) {
-                    int64_t best_idx = 0;
-                    T best_val = A[o * reduce_dim * inner + i];
-                    for (size_t r = 1; r < reduce_dim; ++r) {
-                        T v = A[o * reduce_dim * inner + r * inner + i];
-                        if (v < best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
-                    }
-                    result[o * inner + i] = best_idx;
+            const T* __restrict src = A.data->data();
+            int64_t* __restrict dst = result.data->data();
+
+            #pragma omp parallel for schedule(static)
+            for (int64_t oi = 0; oi < static_cast<int64_t>(outer * inner); ++oi) {
+                size_t o = static_cast<size_t>(oi) / inner;
+                size_t i = static_cast<size_t>(oi) % inner;
+                int64_t best_idx = 0;
+                T best_val = src[o * reduce_dim * inner + i];
+                for (size_t r = 1; r < reduce_dim; ++r) {
+                    T v = src[o * reduce_dim * inner + r * inner + i];
+                    if (v < best_val) { best_val = v; best_idx = static_cast<int64_t>(r); }
                 }
+                dst[o * inner + i] = best_idx;
             }
             return result;
         }
@@ -725,8 +795,13 @@ namespace TensorN
             if (!A.is_isomorphic(B))
                 throw std::invalid_argument("Tensors must have same shape for equal");
             Tensor<int> result(A.shape());
-            for (size_t i = 0; i < A.size(); ++i)
-                result[i] = (A[i] == B[i]) ? 1 : 0;
+            const T* __restrict a = A.data->data();
+            const T* __restrict b = B.data->data();
+            int* __restrict c = result.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+                c[i] = (a[i] == b[i]) ? 1 : 0;
             return result;
         }
 
@@ -736,14 +811,80 @@ namespace TensorN
             if (!A.is_isomorphic(B))
                 throw std::invalid_argument("Tensors must have same shape for greater");
             Tensor<int> result(A.shape());
-            for (size_t i = 0; i < A.size(); ++i)
-                result[i] = (A[i] > B[i]) ? 1 : 0;
+            const T* __restrict a = A.data->data();
+            const T* __restrict b = B.data->data();
+            int* __restrict c = result.data->data();
+            size_t n = A.size();
+            #pragma omp parallel for schedule(static)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+                c[i] = (a[i] > b[i]) ? 1 : 0;
             return result;
         }
 
         // ================================================================
         // 2D Convolution
         // ================================================================
+
+        namespace detail
+        {
+            template <typename T>
+            void im2col(const T* input, size_t C, size_t H, size_t W,
+                        size_t kH, size_t kW, int stride, int padding,
+                        size_t oH, size_t oW, T* col)
+            {
+                size_t col_row_size = C * kH * kW;
+                #pragma omp parallel for schedule(static)
+                for (int64_t oh = 0; oh < static_cast<int64_t>(oH); ++oh)
+                {
+                    for (size_t ow = 0; ow < oW; ++ow)
+                    {
+                        T* col_row = col + (oh * oW + ow) * col_row_size;
+                        size_t col_idx = 0;
+                        for (size_t c = 0; c < C; ++c)
+                            for (size_t kh = 0; kh < kH; ++kh)
+                                for (size_t kw = 0; kw < kW; ++kw)
+                                {
+                                    int ih = static_cast<int>(oh * stride + kh) - padding;
+                                    int iw = static_cast<int>(ow * stride + kw) - padding;
+                                    if (ih >= 0 && ih < static_cast<int>(H) &&
+                                        iw >= 0 && iw < static_cast<int>(W))
+                                        col_row[col_idx] = input[(c * H + ih) * W + iw];
+                                    else
+                                        col_row[col_idx] = T(0);
+                                    ++col_idx;
+                                }
+                    }
+                }
+            }
+
+            template <typename T>
+            void col2im(const T* col, size_t C, size_t H, size_t W,
+                        size_t kH, size_t kW, int stride, int padding,
+                        size_t oH, size_t oW, T* input)
+            {
+                size_t input_size = C * H * W;
+                std::memset(input, 0, input_size * sizeof(T));
+                size_t col_row_size = C * kH * kW;
+
+                for (size_t oh = 0; oh < oH; ++oh)
+                    for (size_t ow = 0; ow < oW; ++ow)
+                    {
+                        const T* col_row = col + (oh * oW + ow) * col_row_size;
+                        size_t col_idx = 0;
+                        for (size_t c = 0; c < C; ++c)
+                            for (size_t kh = 0; kh < kH; ++kh)
+                                for (size_t kw = 0; kw < kW; ++kw)
+                                {
+                                    int ih = static_cast<int>(oh * stride + kh) - padding;
+                                    int iw = static_cast<int>(ow * stride + kw) - padding;
+                                    if (ih >= 0 && ih < static_cast<int>(H) &&
+                                        iw >= 0 && iw < static_cast<int>(W))
+                                        input[(c * H + ih) * W + iw] += col_row[col_idx];
+                                    ++col_idx;
+                                }
+                    }
+            }
+        }
 
         template <typename T>
         Tensor<T> conv2d(const Tensor<T>& input, const Tensor<T>& weight,
@@ -767,30 +908,72 @@ namespace TensorN
 
             Tensor<T> output({N, K, static_cast<size_t>(oH), static_cast<size_t>(oW)});
 
-            for (size_t n = 0; n < N; ++n) {
-                for (size_t k = 0; k < K; ++k) {
-                    for (size_t oh = 0; oh < static_cast<size_t>(oH); ++oh) {
-                        for (size_t ow = 0; ow < static_cast<size_t>(oW); ++ow) {
-                            T val = bias[k];
-                            for (size_t c = 0; c < C; ++c) {
-                                for (size_t kh = 0; kh < kH; ++kh) {
-                                    for (size_t kw = 0; kw < kW; ++kw) {
-                                        int64_t ih = static_cast<int64_t>(oh * stride + kh) - padding;
-                                        int64_t iw = static_cast<int64_t>(ow * stride + kw) - padding;
-                                        if (ih >= 0 && ih < static_cast<int64_t>(H) &&
-                                            iw >= 0 && iw < static_cast<int64_t>(W)) {
-                                            val += input[{n, c, static_cast<size_t>(ih), static_cast<size_t>(iw)}]
-                                                 * weight[{k, c, kh, kw}];
-                                        }
-                                    }
-                                }
-                            }
-                            output[{n, k, oh, ow}] = val;
-                        }
-                    }
+            size_t col_size = C * kH * kW * oH * oW;
+
+#if TENSORN_HAS_OPENBLAS
+            if constexpr (detail::is_blas_type<T>::value)
+            {
+                std::vector<T> col(col_size);
+                const T* weight_ptr = weight.data->data();
+                T* output_ptr = output.data->data();
+                const T* bias_ptr = bias.data->data();
+
+                int M = static_cast<int>(K);
+                int Nn = static_cast<int>(oH * oW);
+                int Kk = static_cast<int>(C * kH * kW);
+
+                for (size_t n = 0; n < N; ++n)
+                {
+                    const T* input_batch = input.data->data() + n * C * H * W;
+                    T* output_batch = output_ptr + n * K * oH * oW;
+
+                    detail::im2col(input_batch, C, H, W, kH, kW, stride, padding,
+                                   static_cast<size_t>(oH), static_cast<size_t>(oW), col.data());
+
+                    if constexpr (std::is_same_v<T, float>)
+                        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            M, Nn, Kk, 1.0f, weight_ptr, Kk,
+                            col.data(), Nn, 0.0f, output_batch, Nn);
+                    else
+                        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            M, Nn, Kk, 1.0, weight_ptr, Kk,
+                            col.data(), Nn, 0.0, output_batch, Nn);
+
+                    #pragma omp parallel for schedule(static)
+                    for (int64_t k = 0; k < static_cast<int64_t>(K); ++k)
+                        for (int64_t hw = 0; hw < static_cast<int64_t>(oH * oW); ++hw)
+                            output_batch[k * oH * oW + hw] += bias_ptr[k];
                 }
+                return output;
             }
-            return output;
+            else
+#endif
+            {
+                const T* __restrict input_ptr = input.data->data();
+                const T* __restrict weight_ptr = weight.data->data();
+                const T* __restrict bias_ptr = bias.data->data();
+                T* __restrict output_ptr = output.data->data();
+
+                #pragma omp parallel for schedule(static)
+                for (int64_t n = 0; n < static_cast<int64_t>(N); ++n)
+                    for (size_t k = 0; k < K; ++k)
+                        for (size_t oh = 0; oh < static_cast<size_t>(oH); ++oh)
+                            for (size_t ow = 0; ow < static_cast<size_t>(oW); ++ow) {
+                                T val = bias_ptr[k];
+                                for (size_t c = 0; c < C; ++c)
+                                    for (size_t kh = 0; kh < kH; ++kh)
+                                        for (size_t kw = 0; kw < kW; ++kw) {
+                                            int64_t ih = static_cast<int64_t>(oh * stride + kh) - padding;
+                                            int64_t iw = static_cast<int64_t>(ow * stride + kw) - padding;
+                                            if (ih >= 0 && ih < static_cast<int64_t>(H) &&
+                                                iw >= 0 && iw < static_cast<int64_t>(W))
+                                                val += input_ptr[((n * C + c) * H + ih) * W + iw]
+                                                     * weight_ptr[((k * C + c) * kH + kh) * kW + kw];
+                                        }
+                                output_ptr[((n * K + k) * oH + oh) * oW + ow] = val;
+                            }
+                return output;
+            }
         }
 
         template <typename T>
@@ -828,35 +1011,37 @@ namespace TensorN
                 throw std::invalid_argument("conv_transpose2d: invalid output dimensions");
 
             Tensor<T> output({N, K, oH, oW});
+            output.zero_();
 
-            for (size_t n = 0; n < N; ++n) {
-                for (size_t c = 0; c < C; ++c) {
-                    for (size_t h = 0; h < H; ++h) {
+            const T* __restrict input_ptr = input.data->data();
+            const T* __restrict weight_ptr = weight.data->data();
+            T* __restrict output_ptr = output.data->data();
+
+            #pragma omp parallel for schedule(static)
+            for (int64_t n = 0; n < static_cast<int64_t>(N); ++n)
+                for (size_t c = 0; c < C; ++c)
+                    for (size_t h = 0; h < H; ++h)
                         for (size_t w = 0; w < W; ++w) {
-                            T in_val = input[{n, c, h, w}];
-                            for (size_t k = 0; k < K; ++k) {
-                                for (size_t kh = 0; kh < kH; ++kh) {
+                            T in_val = input_ptr[((n * C + c) * H + h) * W + w];
+                            for (size_t k = 0; k < K; ++k)
+                                for (size_t kh = 0; kh < kH; ++kh)
                                     for (size_t kw = 0; kw < kW; ++kw) {
                                         int64_t oh = static_cast<int64_t>(h * stride + kh) - padding;
                                         int64_t ow = static_cast<int64_t>(w * stride + kw) - padding;
                                         if (oh >= 0 && oh < static_cast<int64_t>(oH) &&
-                                            ow >= 0 && ow < static_cast<int64_t>(oW)) {
-                                            output[{n, k, static_cast<size_t>(oh), static_cast<size_t>(ow)}]
-                                                += in_val * weight[{k, c, kh, kw}];
-                                        }
+                                            ow >= 0 && ow < static_cast<int64_t>(oW))
+                                            output_ptr[((n * K + k) * oH + oh) * oW + ow]
+                                                += in_val * weight_ptr[((k * C + c) * kH + kh) * kW + kw];
                                     }
-                                }
-                            }
                         }
-                    }
-                }
-            }
 
-            for (size_t n = 0; n < N; ++n)
+            const T* __restrict bias_ptr = bias.data->data();
+            #pragma omp parallel for schedule(static)
+            for (int64_t n = 0; n < static_cast<int64_t>(N); ++n)
                 for (size_t k = 0; k < K; ++k)
                     for (size_t oh = 0; oh < oH; ++oh)
                         for (size_t ow = 0; ow < oW; ++ow)
-                            output[{n, k, oh, ow}] += bias[k];
+                            output_ptr[((n * K + k) * oH + oh) * oW + ow] += bias_ptr[k];
 
             return output;
         }

@@ -14,6 +14,10 @@
     <a href="#-构建">构建</a> ·
     <a href="#-架构">架构</a> ·
     <a href="#-运算">运算</a> ·
+    <a href="#-原地操作">原地操作</a> ·
+    <a href="#-零拷贝视图--内存池">零拷贝</a> ·
+    <a href="#cuda-流与异步">CUDA流</a> ·
+    <a href="#-融合内核">融合内核</a> ·
     <a href="#-基准测试">基准测试</a> ·
     <a href="#-依赖">依赖</a>
   </p>
@@ -32,6 +36,10 @@
 - **丰富的运算集** — 线性代数、逐元素数学运算、激活函数、规约、卷积
 - **数据 I/O** — CSV、NumPy `.npy`/`.npz`、JSON、PyTorch `.pt` 格式，附带 TensorN↔PyTorch 桥接工具
 - **OpenCV 互操作** — 可选的 `cv::Mat` 转换
+- **原地操作** — `add_()`, `sub_()`, `mul_()`, `div_()`, `apply_()`, `fill_()`, `zero_()` 等零分配原地变换
+- **零拷贝视图** — `view()`, `reshape()` 共享底层数据，无需复制
+- **CUDA 流与异步** — 流感知 cuBLAS、异步传输、内存池与融合内核
+- **OpenBLAS 多核加速** — OpenMP 并行化所有非 BLAS 循环，im2col+GEMM 卷积
 
 ---
 
@@ -93,14 +101,17 @@ TensorN
 ├── einsum()           爱因斯坦求和引擎
 ├── operations.hpp     高级运算（matmul, dot, outer, gram, ...）
 ├── static.hpp         数据 I/O（csv, npy, npz, json, pt）
-├── BLAS/              OpenBLAS 加速后端
+├── memory_pool.hpp    CPU 内存池（桶分配器、PooledAllocator、PooledVector）
+├── BLAS/              OpenBLAS 加速后端（OpenMP 多核并行、im2col+GEMM 卷积）
 │   └── blas_tensor.hpp
 └── CUDA/              CUDA/cuBLAS 加速后端
-    ├── cuda_tensor.hpp   CudaTensor<T>（设备内存管理）
-    ├── matmul.cu         矩阵乘法（cuBLAS）
-    ├── elementwise.cu    逐元素运算与激活函数内核
-    ├── reduction.cu      规约内核（sum, mean, max, ...）
-    └── convolution.cu    Conv2d / ConvTranspose2d 内核
+    ├── cuda_tensor.hpp    CudaTensor<T>（设备内存管理、异步传输、零拷贝视图）
+    ├── cuda_stream.hpp    CudaStream、CudaEvent、流池、设备/页锁定内存池
+    ├── fused_kernels.hpp  融合内核（matmul+activation、conv+activation、add_relu 等）
+    ├── matmul.cu          矩阵乘法（cuBLAS，流感知）
+    ├── elementwise.cu     逐元素运算与激活函数内核
+    ├── reduction.cu       规约内核（sum, mean, max, ...）
+    └── convolution.cu     Conv2d / ConvTranspose2d 内核
 ```
 
 ### 后端
@@ -177,6 +188,58 @@ python tools/pt_converter.py pt2torch data.pt model.pth
 python tools/pt_converter.py np2pt data.npy data.pt
 python tools/pt_converter.py pt2np data.pt data.npy
 ```
+
+---
+
+## ⚡ 原地操作
+
+对 Tensor 和 CudaTensor 均支持的零分配原地变换：
+
+```cpp
+Tensor<float> t({2, 3}, {1, 2, 3, 4, 5, 6});
+t.add_(2.0f);          // 张量每个元素加 2
+t.mul_(0.5f);          // 张量每个元素乘 0.5
+t.apply_([](float x) { return x * x; });  // 逐元素自定义变换
+t.zero_();             // 全零填充
+```
+
+## 🔄 零拷贝视图 & 内存池
+
+- **`view(shape)` / `reshape(shape)`** — 返回共享底层数据的新张量，不分配内存
+- **`memory_pool.hpp`** — CPU 桶分配器，提供 `PooledAllocator<T>` 和 `PooledVector<T>`
+- **`from_pool(shape, pool)`** — 从内存池分配张量
+
+## 🌊 CUDA 流与异步
+
+所有 CUDA 运算均提供 `cudaStream_t` 重载，配合流池与异步内存池实现高效流水线：
+
+```cpp
+auto stream = CudaStreamPool::acquire();
+auto a_dev = CudaTensor<float>::fromPinned(a_host, stream);
+auto b_dev = CudaTensor<float>::fromPinned(b_host, stream);
+auto c_dev = matmul(a_dev, b_dev, stream);        // 流感知 cuBLAS
+c_dev.copyToHostAsync(result, stream);             // 异步回传
+stream.sync();
+```
+
+- **`CudaStreamPool`** — 预创建 CUDA 流复用
+- **`CudaMemoryPool` / `PinnedMemoryPool`** — 设备与页锁定内存池
+- **`copyFromHostAsync()` / `copyToHostAsync()` / `copyFromDeviceAsync()`** — 异步数据传输
+- **`memset_zero_async()`** — 异步零初始化
+- **`view()` / `reshape()`** — 设备端零拷贝视图
+
+## 🔥 融合内核
+
+消除中间缓冲区，单次内核完成多重运算：
+
+| 融合运算 | 描述 |
+|---|---|
+| `fused_matmul_relu(A, B)` | 矩阵乘法 + ReLU 激活 |
+| `fused_conv_relu(input, kernel, bias)` | Conv2d + Bias + ReLU |
+| `fused_add_relu(A, B)` | 逐元素加法 + ReLU |
+| `fused_mul_add(A, B, C)` | 逐元素乘法 + 加法 |
+| `fused_batchnorm_inference(x, gamma, beta, mean, var)` | 推理批归一化 |
+| `fused_residual_block(x, w1, w2, ...)` | 残差块（MLP/卷积） |
 
 ---
 

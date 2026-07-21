@@ -229,6 +229,11 @@ void softmax_2d_axis1(const CudaTensor<T>& A, CudaTensor<T>& C) {
 
 template <typename T>
 void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis) {
+    softmax(A, C, axis, nullptr);
+}
+
+template <typename T>
+void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t stream) {
     if (A.shape().empty()) throw std::invalid_argument("Softmax requires non-empty tensor");
     size_t ndim = A.shape().size();
     if (axis < 0) axis = static_cast<int>(ndim) + axis;
@@ -242,23 +247,45 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis) {
         T *d_max, *d_sum;
         cudaMalloc(reinterpret_cast<void**>(&d_max), sizeof(T));
         cudaMalloc(reinterpret_cast<void**>(&d_sum), sizeof(T));
-        cudaMemset(d_sum, 0, sizeof(T));
+        cudaMemsetAsync(d_sum, 0, sizeof(T), stream);
         CudaTensor<T> temp(A.shape());
-        softmax_max<<<1,1>>>(A.device_ptr(), d_max, 1, n);
-        softmax_exp_sum<<<1,n>>>(A.device_ptr(), d_max, temp.device_ptr(), d_sum, 1, n);
+        softmax_max<<<1,1,0,stream>>>(A.device_ptr(), d_max, 1, n);
+        softmax_exp_sum<<<1,n,0,stream>>>(A.device_ptr(), d_max, temp.device_ptr(), d_sum, 1, n);
         size_t bs=256, gs=(n+bs-1)/bs;
-        softmax_normalize<<<gs,bs>>>(temp.device_ptr(), d_sum, 1, n);
+        softmax_normalize<<<gs,bs,0,stream>>>(temp.device_ptr(), d_sum, 1, n);
         C = std::move(temp); cudaFree(d_max); cudaFree(d_sum);
         return;
     }
-    if (axis == 1) { softmax_2d_axis1(A, C); return; }
+    if (axis == 1) {
+        size_t rows = A.shape()[0], cols = A.shape()[1];
+        T* d_row_max; T* d_row_sum;
+        cudaMalloc(reinterpret_cast<void**>(&d_row_max), rows * sizeof(T));
+        cudaMalloc(reinterpret_cast<void**>(&d_row_sum), rows * sizeof(T));
+        cudaMemsetAsync(d_row_sum, 0, rows * sizeof(T), stream);
+        CudaTensor<T> temp({rows, cols});
+        softmax_max<<<rows, 1, 0, stream>>>(A.device_ptr(), d_row_max, rows, cols);
+        softmax_exp_sum<<<rows, cols, 0, stream>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
+        size_t total = rows * cols, bs = 256, gs = (total + bs - 1) / bs;
+        softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, rows, cols);
+        C = std::move(temp);
+        cudaFree(d_row_max); cudaFree(d_row_sum);
+        return;
+    }
     if (axis == 0 && A.shape().size() == 2) {
         size_t rows = A.shape()[0], cols = A.shape()[1];
         CudaTensor<T> At({cols, rows}), Ct({cols, rows});
         size_t total = rows * cols, bs = 256, gs = (total + bs - 1) / bs;
-        transpose<<<gs,bs>>>(A.device_ptr(), At.device_ptr(), rows, cols);
-        softmax_2d_axis1(At, Ct);
-        transpose_back<<<gs,bs>>>(Ct.device_ptr(), C.device_ptr(), cols, rows);
+        kernels::transpose<<<gs,bs,0,stream>>>(A.device_ptr(), At.device_ptr(), rows, cols);
+        T* d_row_max; T* d_row_sum;
+        cudaMalloc(reinterpret_cast<void**>(&d_row_max), cols * sizeof(T));
+        cudaMalloc(reinterpret_cast<void**>(&d_row_sum), cols * sizeof(T));
+        cudaMemsetAsync(d_row_sum, 0, cols * sizeof(T), stream);
+        CudaTensor<T> temp({cols, rows});
+        softmax_max<<<cols, 1, 0, stream>>>(At.device_ptr(), d_row_max, cols, rows);
+        softmax_exp_sum<<<cols, rows, 0, stream>>>(At.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, cols, rows);
+        softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, cols, rows);
+        kernels::transpose_back<<<gs,bs,0,stream>>>(temp.device_ptr(), C.device_ptr(), cols, rows);
+        cudaFree(d_row_max); cudaFree(d_row_sum);
         return;
     }
     throw std::runtime_error("Softmax for this axis configuration not implemented");
@@ -266,18 +293,26 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis) {
 
 // -- launch helpers --
 template <typename T>
-void launch_unary(void(*k)(const T*,T*,size_t), const CudaTensor<T>& A, CudaTensor<T>& C) {
+void launch_unary(void(*k)(const T*,T*,size_t), const CudaTensor<T>& A, CudaTensor<T>& C, cudaStream_t stream) {
     if (A.size() != C.size()) throw std::invalid_argument("size mismatch");
     size_t n=A.size(), bs=256, gs=(n+bs-1)/bs;
-    k<<<gs,bs>>>(A.device_ptr(),C.device_ptr(),n);
+    k<<<gs,bs,0,stream>>>(A.device_ptr(),C.device_ptr(),n);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
+template <typename T>
+void launch_unary(void(*k)(const T*,T*,size_t), const CudaTensor<T>& A, CudaTensor<T>& C) {
+    launch_unary(k, A, C, nullptr);
+}
+template <typename T>
+void launch_binary(void(*k)(const T*,const T*,T*,size_t), const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream) {
+    if (A.size()!=B.size()||A.size()!=C.size()) throw std::invalid_argument("size mismatch");
+    size_t n=A.size(), bs=256, gs=(n+bs-1)/bs;
+    k<<<gs,bs,0,stream>>>(A.device_ptr(),B.device_ptr(),C.device_ptr(),n);
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 template <typename T>
 void launch_binary(void(*k)(const T*,const T*,T*,size_t), const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C) {
-    if (A.size()!=B.size()||A.size()!=C.size()) throw std::invalid_argument("size mismatch");
-    size_t n=A.size(), bs=256, gs=(n+bs-1)/bs;
-    k<<<gs,bs>>>(A.device_ptr(),B.device_ptr(),C.device_ptr(),n);
-    CHECK_CUDA_ERROR(cudaGetLastError());
+    launch_binary(k, A, B, C, nullptr);
 }
 template <typename T>
 void launch_binary_int(void(*k)(const T*,const T*,int*,size_t), const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<int>& C) {
@@ -289,13 +324,19 @@ void launch_binary_int(void(*k)(const T*,const T*,int*,size_t), const CudaTensor
 
 // -- impl --
 #define IMPL_UNARY(NAME) template<typename T> void NAME(const CudaTensor<T>& A, CudaTensor<T>& C) { launch_unary(kernels::NAME<T>,A,C); }
+#define IMPL_UNARY_STREAM(NAME) template<typename T> void NAME(const CudaTensor<T>& A, CudaTensor<T>& C, cudaStream_t stream) { launch_unary(kernels::NAME<T>,A,C,stream); }
 #define IMPL_BINARY(NAME) template<typename T> void NAME(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C) { launch_binary(kernels::NAME<T>,A,B,C); }
+#define IMPL_BINARY_STREAM(NAME) template<typename T> void NAME(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream) { launch_binary(kernels::NAME<T>,A,B,C,stream); }
 #define IMPL_BINARY_INT(NAME) template<typename T> void NAME(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<int>& C) { launch_binary_int(kernels::NAME<T>,A,B,C); }
 
 IMPL_BINARY(add)
+IMPL_BINARY_STREAM(add)
 IMPL_BINARY(subtract)
+IMPL_BINARY_STREAM(subtract)
 IMPL_BINARY(multiply)
+IMPL_BINARY_STREAM(multiply)
 IMPL_BINARY(divide)
+IMPL_BINARY_STREAM(divide)
 IMPL_UNARY(negate)
 IMPL_UNARY(abs)
 IMPL_UNARY(sqrt)
@@ -304,6 +345,7 @@ IMPL_UNARY(log)
 IMPL_UNARY(sin)
 IMPL_UNARY(cos)
 IMPL_UNARY(relu)
+IMPL_UNARY_STREAM(relu)
 IMPL_UNARY(gelu)
 IMPL_UNARY(sigmoid)
 IMPL_UNARY(tanh)
@@ -320,10 +362,22 @@ template<typename T> void add_scalar(const CudaTensor<T>& A, T s, CudaTensor<T>&
     kernels::add_scalar<<<gs,bs>>>(A.device_ptr(),s,C.device_ptr(),n);
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
+template<typename T> void add_scalar(const CudaTensor<T>& A, T s, CudaTensor<T>& C, cudaStream_t stream) {
+    if(A.size()!=C.size()) throw std::invalid_argument("size mismatch");
+    size_t n=A.size(),bs=256,gs=(n+bs-1)/bs;
+    kernels::add_scalar<<<gs,bs,0,stream>>>(A.device_ptr(),s,C.device_ptr(),n);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
 template<typename T> void multiply_scalar(const CudaTensor<T>& A, T s, CudaTensor<T>& C) {
     if(A.size()!=C.size()) throw std::invalid_argument("size mismatch");
     size_t n=A.size(),bs=256,gs=(n+bs-1)/bs;
     kernels::multiply_scalar<<<gs,bs>>>(A.device_ptr(),s,C.device_ptr(),n);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
+template<typename T> void multiply_scalar(const CudaTensor<T>& A, T s, CudaTensor<T>& C, cudaStream_t stream) {
+    if(A.size()!=C.size()) throw std::invalid_argument("size mismatch");
+    size_t n=A.size(),bs=256,gs=(n+bs-1)/bs;
+    kernels::multiply_scalar<<<gs,bs,0,stream>>>(A.device_ptr(),s,C.device_ptr(),n);
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 template<typename T> void subtract_scalar(const CudaTensor<T>& A, T s, CudaTensor<T>& C) {
@@ -364,11 +418,15 @@ template<typename T> void elu(const CudaTensor<T>& A, T alpha, CudaTensor<T>& C)
 }
 
 template<typename T> void transpose(const CudaTensor<T>& A, CudaTensor<T>& C) {
+    transpose(A, C, nullptr);
+}
+
+template<typename T> void transpose(const CudaTensor<T>& A, CudaTensor<T>& C, cudaStream_t stream) {
     if(A.shape().size()!=2) throw std::invalid_argument("transpose requires 2D tensor");
     size_t rows=A.shape()[0], cols=A.shape()[1];
     if(C.shape()[0]!=cols||C.shape()[1]!=rows) throw std::invalid_argument("output shape mismatch");
     size_t total=rows*cols, bs=256, gs=(total+bs-1)/bs;
-    kernels::transpose<<<gs,bs>>>(A.device_ptr(),C.device_ptr(),rows,cols);
+    kernels::transpose<<<gs,bs,0,stream>>>(A.device_ptr(),C.device_ptr(),rows,cols);
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 

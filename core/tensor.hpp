@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <numeric>
 #include <cassert>
+#include <functional>
+#include "memory_pool.hpp"
 
 namespace TensorN
 {
@@ -385,6 +387,129 @@ namespace TensorN
             return os;
         }
         void save(const std::string &filename, const std::string &format = "auto") const;
+
+        T* raw_data() { return data->data(); }
+        const T* raw_data() const { return data->data(); }
+
+        Tensor<T>& add_(const Tensor<T>& B)
+        {
+            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            T* __restrict dst = data->data();
+            const T* __restrict src = B.data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] += src[i];
+            return *this;
+        }
+
+        Tensor<T>& sub_(const Tensor<T>& B)
+        {
+            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            T* __restrict dst = data->data();
+            const T* __restrict src = B.data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] -= src[i];
+            return *this;
+        }
+
+        Tensor<T>& mul_(const Tensor<T>& B)
+        {
+            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            T* __restrict dst = data->data();
+            const T* __restrict src = B.data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] *= src[i];
+            return *this;
+        }
+
+        Tensor<T>& div_(const Tensor<T>& B)
+        {
+            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            T* __restrict dst = data->data();
+            const T* __restrict src = B.data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] /= src[i];
+            return *this;
+        }
+
+        Tensor<T>& add_(T scalar)
+        {
+            T* __restrict dst = data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] += scalar;
+            return *this;
+        }
+
+        Tensor<T>& sub_(T scalar)
+        {
+            T* __restrict dst = data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] -= scalar;
+            return *this;
+        }
+
+        Tensor<T>& mul_(T scalar)
+        {
+            T* __restrict dst = data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] *= scalar;
+            return *this;
+        }
+
+        Tensor<T>& div_(T scalar)
+        {
+            T* __restrict dst = data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] /= scalar;
+            return *this;
+        }
+
+        template <typename Func>
+        Tensor<T>& apply_(Func func)
+        {
+            T* __restrict dst = data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] = func(dst[i]);
+            return *this;
+        }
+
+        template <typename Func>
+        Tensor<T>& apply_(const Tensor<T>& B, Func func)
+        {
+            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            T* __restrict dst = data->data();
+            const T* __restrict src = B.data->data();
+            for (size_t i = 0; i < _size; ++i) dst[i] = func(dst[i], src[i]);
+            return *this;
+        }
+
+        Tensor<T>& fill_(T value)
+        {
+            std::fill(data->begin(), data->end(), value);
+            return *this;
+        }
+
+        Tensor<T>& zero_()
+        {
+            return fill_(T(0));
+        }
+
+        static Tensor<T> from_pool(const std::vector<size_t>& shape)
+        {
+            Tensor<T> t;
+            t._shape = shape;
+            t._size = 1;
+            for (auto& e : shape) t._size *= e;
+            auto vec = std::make_shared<std::vector<T, PooledAllocator<T>>>(t._size);
+            t.data = std::reinterpret_pointer_cast<std::vector<T>>(vec);
+            return t;
+        }
+
+        Tensor<T> view() const
+        {
+            return shallow_copy();
+        }
+
+        Tensor<T> reshape(const std::vector<size_t>& new_shape) const
+        {
+            size_t new_size = 1;
+            for (auto& e : new_shape) new_size *= e;
+            if (new_size != _size)
+                throw std::invalid_argument("Reshape: total size must match");
+            Tensor<T> result = shallow_copy();
+            result._shape = new_shape;
+            return result;
+        }
     };
 
     template <typename T>

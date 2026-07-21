@@ -3,6 +3,7 @@
 #define __CORE__H__
 
 #include "TensorN.hpp"
+#include "memory_pool.hpp"
 #include "einsum.hpp"
 #include "operations.hpp"
 #include "static.hpp"
@@ -10,10 +11,12 @@
 
 #ifdef TENSORN_CUDA_AVAILABLE
 #include "CUDA/cuda_tensor.hpp"
+#include "CUDA/cuda_stream.hpp"
 #include "CUDA/elementwise.hpp"
 #include "CUDA/reduction.hpp"
 #include "CUDA/matmul.hpp"
 #include "CUDA/convolution.hpp"
+#include "CUDA/fused_kernels.hpp"
 #endif
 
 #endif //!__CORE__H__
