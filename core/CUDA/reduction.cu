@@ -258,7 +258,7 @@ namespace TensorN
 
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -370,7 +370,7 @@ namespace TensorN
             size_t ndim = shape.size();
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -399,7 +399,7 @@ namespace TensorN
             size_t ndim = shape.size();
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -449,7 +449,7 @@ namespace TensorN
         T norm(const CudaTensor<T>& A)
         {
             if (A.shape().size() != 1)
-                throw std::invalid_argument("norm requires a 1D tensor");
+                TENSOR_THROW("norm requires a 1D tensor");
             return frobenius_norm(A);
         }
 

@@ -15,11 +15,11 @@ namespace TensorN
     {
         if (A.shape().size() != 1 || B.shape().size() != 1)
         {
-            throw std::invalid_argument("dot requires 1D tensors");
+            TENSOR_THROW("dot requires 1D tensors");
         }
         if (A.shape()[0] != B.shape()[0])
         {
-            throw std::invalid_argument("Dimension mismatch for dot product");
+            TENSOR_THROW("Dimension mismatch for dot product");
         }
         return einsum<T>("i,i->", A, B);
     }
@@ -30,7 +30,7 @@ namespace TensorN
     {
         if (A.shape().size() != 1 || B.shape().size() != 1)
         {
-            throw std::invalid_argument("outer requires 1D tensors");
+            TENSOR_THROW("outer requires 1D tensors");
         }
         return einsum<T>("i,j->ij", A, B);
     }
@@ -41,11 +41,11 @@ namespace TensorN
     {
         if (A.shape().size() != 2 || B.shape().size() != 2)
         {
-            throw std::invalid_argument("matmul requires 2D tensors");
+            TENSOR_THROW("matmul requires 2D tensors");
         }
         if (A.shape()[1] != B.shape()[0])
         {
-            throw std::invalid_argument("Dimension mismatch for matrix multiplication");
+            TENSOR_THROW("Dimension mismatch for matrix multiplication");
         }
         return einsum<T>("ij,jk->ik", A, B);
     }
@@ -56,7 +56,7 @@ namespace TensorN
     {
         if (!A.is_isomorphic(B))
         {
-            throw std::invalid_argument("Tensors must have same shape for Hadamard product");
+            TENSOR_THROW("Tensors must have same shape for Hadamard product");
         }
         return einsum<T>("...,...->...", A, B);
     }
@@ -68,11 +68,11 @@ namespace TensorN
         // x: vector (1D), A: matrix (2D), y: vector (1D)
         if (x.shape().size() != 1 || A.shape().size() != 2 || y.shape().size() != 1)
         {
-            throw std::invalid_argument("bilinear: x must be 1D, A must be 2D, y must be 1D");
+            TENSOR_THROW("bilinear: x must be 1D, A must be 2D, y must be 1D");
         }
         if (x.shape()[0] != A.shape()[0] || A.shape()[1] != y.shape()[0])
         {
-            throw std::invalid_argument("Dimension mismatch for bilinear form");
+            TENSOR_THROW("Dimension mismatch for bilinear form");
         }
 
         // 使用 einsum: x_i * A_ij * y_j
@@ -87,7 +87,7 @@ namespace TensorN
     {
         if (X.shape().size() != 2)
         {
-            throw std::invalid_argument("gram requires 2D tensor");
+            TENSOR_THROW("gram requires 2D tensor");
         }
         // X_ik * X_jk -> G_ij
         return einsum<T>("ik,jk->ij", X, X);
@@ -108,7 +108,7 @@ namespace TensorN
         {
             if (axis >= A.shape().size())
             {
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
             }
         }
 
@@ -150,7 +150,7 @@ namespace TensorN
     {
         if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
         {
-            throw std::invalid_argument("trace requires a square matrix");
+            TENSOR_THROW("trace requires a square matrix");
         }
         auto result = einsum<T>("ii->", A).tensor;
         return result[0];
@@ -170,7 +170,7 @@ namespace TensorN
     {
         if (axis >= A.shape().size())
         {
-            throw std::invalid_argument("Axis out of range");
+            TENSOR_THROW("Axis out of range");
         }
 
         // 构建表达式
@@ -223,7 +223,7 @@ namespace TensorN
         // 验证轴的排列
         if (new_axes.size() != shape.size())
         {
-            throw std::invalid_argument("Number of axes must match tensor dimension");
+            TENSOR_THROW("Number of axes must match tensor dimension");
         }
 
         std::vector<bool> used(shape.size(), false);
@@ -231,11 +231,11 @@ namespace TensorN
         {
             if (axis >= shape.size())
             {
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
             }
             if (used[axis])
             {
-                throw std::invalid_argument("Duplicate axis");
+                TENSOR_THROW("Duplicate axis");
             }
             used[axis] = true;
         }
@@ -269,7 +269,7 @@ namespace TensorN
     {
         if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
         {
-            throw std::invalid_argument("diag requires a square matrix");
+            TENSOR_THROW("diag requires a square matrix");
         }
         return einsum<T>("ii->i", A);
     }
@@ -280,7 +280,7 @@ namespace TensorN
     {
         if (v.shape().size() != 1)
         {
-            throw std::invalid_argument("diag_matrix requires a 1D tensor");
+            TENSOR_THROW("diag_matrix requires a 1D tensor");
         }
 
         opt<T> oper({v.shape()[0], v.shape()[0]});
@@ -371,7 +371,7 @@ namespace TensorN
         {
             if (v.shape().size() != 1)
             {
-                throw std::invalid_argument("norm requires a 1D tensor");
+                TENSOR_THROW("norm requires a 1D tensor");
             }
             return std::sqrt(dot(v, v)[0]);
         }
@@ -382,7 +382,7 @@ namespace TensorN
         {
             if (A.shape().size() != 2)
             {
-                throw std::invalid_argument("frobenius_norm requires a 2D tensor");
+                TENSOR_THROW("frobenius_norm requires a 2D tensor");
             }
             return std::sqrt(sum(hadamard(A, A).tensor));
         }
@@ -398,7 +398,7 @@ namespace TensorN
         size_t ndim = A.shape().size();
         if (axis < 0) axis = static_cast<int>(ndim) + axis;
         if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-            throw std::invalid_argument("Softmax axis out of range");
+            TENSOR_THROW("Softmax axis out of range");
 
         Tensor<T> result(A.shape());
 
@@ -447,7 +447,7 @@ namespace TensorN
                 return result;
             }
         }
-        throw std::runtime_error("Softmax: only 1D/2D supported");
+        TENSOR_THROW("Softmax: only 1D/2D supported");
     }
 
     // ================================================================
@@ -461,7 +461,7 @@ namespace TensorN
         size_t ndim = shape.size();
         if (axis < 0) axis = static_cast<int>(ndim) + axis;
         if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-            throw std::invalid_argument("Argmax axis out of range");
+            TENSOR_THROW("Argmax axis out of range");
 
         size_t outer = 1, reduce_dim = shape[axis], inner = 1;
         for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -493,7 +493,7 @@ namespace TensorN
         size_t ndim = shape.size();
         if (axis < 0) axis = static_cast<int>(ndim) + axis;
         if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-            throw std::invalid_argument("Argmin axis out of range");
+            TENSOR_THROW("Argmin axis out of range");
 
         size_t outer = 1, reduce_dim = shape[axis], inner = 1;
         for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -526,7 +526,7 @@ namespace TensorN
     Tensor<int> equal(const Tensor<T>& A, const Tensor<T>& B)
     {
         if (!A.is_isomorphic(B))
-            throw std::invalid_argument("Tensors must have same shape for equal");
+            TENSOR_THROW("Tensors must have same shape for equal");
         Tensor<int> result(A.shape());
         for (size_t i = 0; i < A.size(); ++i)
             result[i] = (A[i] == B[i]) ? 1 : 0;
@@ -537,7 +537,7 @@ namespace TensorN
     Tensor<int> greater(const Tensor<T>& A, const Tensor<T>& B)
     {
         if (!A.is_isomorphic(B))
-            throw std::invalid_argument("Tensors must have same shape for greater");
+            TENSOR_THROW("Tensors must have same shape for greater");
         Tensor<int> result(A.shape());
         for (size_t i = 0; i < A.size(); ++i)
             result[i] = (A[i] > B[i]) ? 1 : 0;
@@ -553,9 +553,9 @@ namespace TensorN
                      const Tensor<T>& bias, int stride = 1, int padding = 0)
     {
         if (input.shape().size() != 4 || weight.shape().size() != 4)
-            throw std::invalid_argument("conv2d: input and weight must be 4D");
+            TENSOR_THROW("conv2d: input and weight must be 4D");
         if (bias.shape().size() != 1)
-            throw std::invalid_argument("conv2d: bias must be 1D");
+            TENSOR_THROW("conv2d: bias must be 1D");
 
         size_t N = input.shape()[0], C = input.shape()[1];
         size_t H = input.shape()[2], W = input.shape()[3];
@@ -596,9 +596,9 @@ namespace TensorN
                                const Tensor<T>& bias, int stride = 1, int padding = 0)
     {
         if (input.shape().size() != 4 || weight.shape().size() != 4)
-            throw std::invalid_argument("conv_transpose2d: input and weight must be 4D");
+            TENSOR_THROW("conv_transpose2d: input and weight must be 4D");
         if (bias.shape().size() != 1)
-            throw std::invalid_argument("conv_transpose2d: bias must be 1D");
+            TENSOR_THROW("conv_transpose2d: bias must be 1D");
 
         size_t N = input.shape()[0], C = input.shape()[1];
         size_t H = input.shape()[2], W = input.shape()[3];

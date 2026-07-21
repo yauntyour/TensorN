@@ -104,16 +104,16 @@ namespace TensorN
         void matmul_cublas(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (A.shape().size() != 2 || B.shape().size() != 2 || C.shape().size() != 2)
-                throw std::invalid_argument("matmul_cublas requires 2D tensors");
+                TENSOR_THROW("matmul_cublas requires 2D tensors");
 
             size_t M = A.shape()[0];
             size_t K = A.shape()[1];
             size_t N = B.shape()[1];
 
             if (B.shape()[0] != K)
-                throw std::invalid_argument("Inner dimensions must match");
+                TENSOR_THROW("Inner dimensions must match");
             if (C.shape()[0] != M || C.shape()[1] != N)
-                throw std::invalid_argument("Output tensor has wrong shape");
+                TENSOR_THROW("Output tensor has wrong shape");
 
             T alpha = T(1), beta = T(0);
 
@@ -134,10 +134,10 @@ namespace TensorN
                     A.device_ptr(), static_cast<int>(K),
                     &beta, C.device_ptr(), static_cast<int>(N));
             else
-                throw std::runtime_error("cuBLAS matmul only supports float/double");
+                TENSOR_THROW("cuBLAS matmul only supports float/double");
 
             if (stat != CUBLAS_STATUS_SUCCESS)
-                throw std::runtime_error("cuBLAS gemm failed");
+                TENSOR_THROW("cuBLAS gemm failed");
         }
 
         template <typename T>
@@ -150,7 +150,7 @@ namespace TensorN
         void batched_matmul_cublas(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (A.shape().size() != 3 || B.shape().size() != 3 || C.shape().size() != 3)
-                throw std::invalid_argument("batched_matmul_cublas requires 3D tensors");
+                TENSOR_THROW("batched_matmul_cublas requires 3D tensors");
 
             size_t batch_size = A.shape()[0];
             size_t M = A.shape()[1];
@@ -158,9 +158,9 @@ namespace TensorN
             size_t N = B.shape()[2];
 
             if (B.shape()[0] != batch_size || B.shape()[1] != K)
-                throw std::invalid_argument("Inner dimensions must match");
+                TENSOR_THROW("Inner dimensions must match");
             if (C.shape()[0] != batch_size || C.shape()[1] != M || C.shape()[2] != N)
-                throw std::invalid_argument("Output tensor has wrong shape");
+                TENSOR_THROW("Output tensor has wrong shape");
 
             T alpha = T(1), beta = T(0);
 
@@ -187,10 +187,10 @@ namespace TensorN
                     &beta, C.device_ptr(), static_cast<int>(N), strideC,
                     static_cast<int>(batch_size));
             else
-                throw std::runtime_error("cuBLAS batched matmul only supports float/double");
+                TENSOR_THROW("cuBLAS batched matmul only supports float/double");
 
             if (stat != CUBLAS_STATUS_SUCCESS)
-                throw std::runtime_error("cuBLAS strided batched gemm failed");
+                TENSOR_THROW("cuBLAS strided batched gemm failed");
         }
 
         template <typename T>
@@ -203,9 +203,9 @@ namespace TensorN
         T dot(const CudaTensor<T>& A, const CudaTensor<T>& B, cudaStream_t stream)
         {
             if (A.shape().size() != 1 || B.shape().size() != 1)
-                throw std::invalid_argument("dot requires 1D tensors");
+                TENSOR_THROW("dot requires 1D tensors");
             if (A.shape()[0] != B.shape()[0])
-                throw std::invalid_argument("Dimension mismatch for dot product");
+                TENSOR_THROW("Dimension mismatch for dot product");
 
             size_t n = A.shape()[0];
             T result = T(0);
@@ -221,10 +221,10 @@ namespace TensorN
                 stat = cublasDdot(blas_handle.get(), static_cast<int>(n),
                     A.device_ptr(), 1, B.device_ptr(), 1, &result);
             else
-                throw std::runtime_error("cuBLAS dot only supports float/double");
+                TENSOR_THROW("cuBLAS dot only supports float/double");
 
             if (stat != CUBLAS_STATUS_SUCCESS)
-                throw std::runtime_error("cuBLAS dot failed");
+                TENSOR_THROW("cuBLAS dot failed");
 
             return result;
         }
@@ -293,10 +293,10 @@ namespace TensorN
         void outer(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (A.shape().size() != 1 || B.shape().size() != 1)
-                throw std::invalid_argument("outer requires 1D tensors");
+                TENSOR_THROW("outer requires 1D tensors");
             size_t m = A.shape()[0], n = B.shape()[0];
             if (C.shape()[0] != m || C.shape()[1] != n)
-                throw std::invalid_argument("Output shape mismatch for outer");
+                TENSOR_THROW("Output shape mismatch for outer");
             dim3 block(16, 16);
             dim3 grid((n + 15) / 16, (m + 15) / 16);
             cudaMemsetAsync(C.device_ptr(), 0, m * n * sizeof(T), stream);
@@ -314,10 +314,10 @@ namespace TensorN
         void gram(const CudaTensor<T>& X, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (X.shape().size() != 2)
-                throw std::invalid_argument("gram requires 2D tensor");
+                TENSOR_THROW("gram requires 2D tensor");
             size_t M = X.shape()[0], N = X.shape()[1];
             if (C.shape()[0] != M || C.shape()[1] != M)
-                throw std::invalid_argument("Output shape mismatch for gram");
+                TENSOR_THROW("Output shape mismatch for gram");
 
             T alpha = T(1), beta = T(0);
             auto& blas_handle = get_stream_blas_handle();
@@ -337,7 +337,7 @@ namespace TensorN
                     X.device_ptr(), static_cast<int>(N),
                     &beta, C.device_ptr(), static_cast<int>(M));
             if (stat != CUBLAS_STATUS_SUCCESS)
-                throw std::runtime_error("cuBLAS gram failed");
+                TENSOR_THROW("cuBLAS gram failed");
         }
 
         template <typename T>
@@ -350,7 +350,7 @@ namespace TensorN
         T bilinear(const CudaTensor<T>& x, const CudaTensor<T>& A, const CudaTensor<T>& y)
         {
             if (x.shape().size() != 1 || A.shape().size() != 2 || y.shape().size() != 1)
-                throw std::invalid_argument("bilinear: wrong dimensions");
+                TENSOR_THROW("bilinear: wrong dimensions");
             size_t M = A.shape()[0], N = A.shape()[1];
 
             T alpha = T(1), beta = T(0);
@@ -370,7 +370,7 @@ namespace TensorN
                     &alpha, A.device_ptr(), static_cast<int>(N),
                     y.device_ptr(), 1, &beta, temp.device_ptr(), 1);
             if (stat != CUBLAS_STATUS_SUCCESS)
-                throw std::runtime_error("cuBLAS gemv failed");
+                TENSOR_THROW("cuBLAS gemv failed");
 
             return dot(x, temp);
         }
@@ -386,7 +386,7 @@ namespace TensorN
         void axpy(T alpha, const CudaTensor<T>& x, CudaTensor<T>& y, cudaStream_t stream)
         {
             if (x.size() != y.size())
-                throw std::invalid_argument("axpy: size mismatch");
+                TENSOR_THROW("axpy: size mismatch");
             size_t n = x.size(), bs = 256, gs = (n + bs - 1) / bs;
             axpy_kernel<<<gs, bs, 0, stream>>>(x.device_ptr(), y.device_ptr(), alpha, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -420,7 +420,7 @@ namespace TensorN
         T trace(const CudaTensor<T>& A)
         {
             if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
-                throw std::invalid_argument("trace requires a square matrix");
+                TENSOR_THROW("trace requires a square matrix");
             size_t n = A.shape()[0];
             if (n == 0) return T(0);
             size_t bs = 256, gs = (n + bs - 1) / bs;
@@ -457,7 +457,7 @@ namespace TensorN
         void diag(const CudaTensor<T>& A, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
-                throw std::invalid_argument("diag requires a square matrix");
+                TENSOR_THROW("diag requires a square matrix");
             size_t n = A.shape()[0];
             size_t bs = 256, gs = (n + bs - 1) / bs;
             diag_kernel<<<gs, bs, 0, stream>>>(A.device_ptr(), C.device_ptr(), n, A.shape()[1]);
@@ -474,7 +474,7 @@ namespace TensorN
         void diag_matrix(const CudaTensor<T>& v, CudaTensor<T>& C, cudaStream_t stream)
         {
             if (v.shape().size() != 1)
-                throw std::invalid_argument("diag_matrix requires a 1D tensor");
+                TENSOR_THROW("diag_matrix requires a 1D tensor");
             size_t n = v.shape()[0];
             size_t total = n * n, bs = 256, gs = (total + bs - 1) / bs;
             diag_matrix_kernel<<<gs, bs, 0, stream>>>(v.device_ptr(), C.device_ptr(), n, n);

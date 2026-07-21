@@ -57,7 +57,7 @@ PTDtype get_pt_dtype()
     if constexpr (std::is_same_v<T, int64_t>)     return PTDtype::INT64;
     if constexpr (std::is_same_v<T, uint8_t>)     return PTDtype::UINT8;
     if constexpr (std::is_same_v<T, int16_t>)     return PTDtype::INT16;
-    throw std::runtime_error("Unsupported type for .pt format");
+    TENSOR_THROW("Unsupported type for .pt format");
 }
 namespace TensorN
 {
@@ -67,11 +67,11 @@ namespace TensorN
         auto &_shape = A.shape();
         if (_shape.size() > 2)
         {
-            throw std::runtime_error("CSV only supports 1D or 2D tensors");
+            TENSOR_THROW("CSV only supports 1D or 2D tensors");
         }
         std::ofstream file(filename);
         if (!file)
-            throw std::runtime_error("Cannot open file for writing: " + filename);
+            TENSOR_THROW("Cannot open file for writing: " + filename);
 
         size_t rows = _shape.empty() ? 1 : (_shape.size() == 1 ? 1 : _shape[0]);
         size_t cols = _shape.empty() ? 1 : (_shape.size() == 1 ? _shape[0] : _shape[1]);
@@ -94,7 +94,7 @@ namespace TensorN
     {
         std::ifstream file(filename);
         if (!file)
-            throw std::runtime_error("Cannot open file: " + filename);
+            TENSOR_THROW("Cannot open file: " + filename);
 
         std::vector<std::vector<T>> rows;
         std::string line;
@@ -119,7 +119,7 @@ namespace TensorN
         for (const auto &r : rows)
         {
             if (r.size() != cols)
-                throw std::runtime_error("Inconsistent CSV columns");
+                TENSOR_THROW("Inconsistent CSV columns");
         }
 
         std::vector<size_t> shape;
@@ -149,7 +149,7 @@ namespace TensorN
         auto &_shape = A.shape();
         if (!is_supported_npy_type<T>())
         {
-            throw std::runtime_error("Type not supported for .npy");
+            TENSOR_THROW("Type not supported for .npy");
         }
         std::vector<size_t> shape(_shape.begin(), _shape.end());
         cnpy::npy_save(filename, A.data->data(), shape, "w");
@@ -161,7 +161,7 @@ namespace TensorN
         cnpy::NpyArray arr = cnpy::npy_load(filename);
         if (arr.word_size != sizeof(T))
         {
-            throw std::runtime_error("Data type size mismatch in .npy file");
+            TENSOR_THROW("Data type size mismatch in .npy file");
         }
         std::vector<size_t> shape(arr.shape.begin(), arr.shape.end());
         std::vector<T> data_vec(arr.data<T>(), arr.data<T>() + arr.num_vals);
@@ -174,7 +174,7 @@ namespace TensorN
         auto &_shape = A.shape();
         if (!is_supported_npy_type<T>())
         {
-            throw std::runtime_error("Type not supported for .npz");
+            TENSOR_THROW("Type not supported for .npz");
         }
         std::vector<size_t> shape(_shape.begin(), _shape.end());
 
@@ -189,7 +189,7 @@ namespace TensorN
         auto npz_map = cnpy::npz_load(filename);
         if (npz_map.empty())
         {
-            throw std::runtime_error("Empty or invalid .npz file: " + filename);
+            TENSOR_THROW("Empty or invalid .npz file: " + filename);
         }
 
         // 取第一个数组（兼容 np.savez(arr) 生成的 arr_0）
@@ -208,7 +208,7 @@ namespace TensorN
         // 类型检查
         if (arr.word_size != sizeof(T))
         {
-            throw std::runtime_error(
+            TENSOR_THROW(
                 "Data type size mismatch in .npz file. "
                 "Expected: " +
                 std::to_string(sizeof(T)) +
@@ -226,11 +226,11 @@ namespace TensorN
     {
         if (!is_supported_pt_type<T>())
         {
-            throw std::runtime_error("Type not supported for .pt");
+            TENSOR_THROW("Type not supported for .pt");
         }
         std::ofstream file(filename, std::ios::binary);
         if (!file)
-            throw std::runtime_error("Cannot open file for writing: " + filename);
+            TENSOR_THROW("Cannot open file for writing: " + filename);
 
         const auto &_shape = A.shape();
         auto dtype = get_pt_dtype<T>();
@@ -260,20 +260,20 @@ namespace TensorN
     {
         std::ifstream file(filename, std::ios::binary);
         if (!file)
-            throw std::runtime_error("Cannot open file: " + filename);
+            TENSOR_THROW("Cannot open file: " + filename);
 
         char magic_buf[9];
         file.read(magic_buf, 9);
         if (std::memcmp(magic_buf, PT_MAGIC, 9) != 0)
         {
-            throw std::runtime_error("Not a valid TensorN .pt file (bad magic)");
+            TENSOR_THROW("Not a valid TensorN .pt file (bad magic)");
         }
 
         uint32_t version;
         file.read(reinterpret_cast<char *>(&version), sizeof(version));
         if (version != PT_VERSION)
         {
-            throw std::runtime_error("Unsupported .pt version: " + std::to_string(version));
+            TENSOR_THROW("Unsupported .pt version: " + std::to_string(version));
         }
 
         uint8_t dtype_byte;
@@ -282,7 +282,7 @@ namespace TensorN
         PTDtype expected = get_pt_dtype<T>();
         if (stored_dtype != expected)
         {
-            throw std::runtime_error("Type mismatch in .pt file");
+            TENSOR_THROW("Type mismatch in .pt file");
         }
 
         uint32_t ndims;
@@ -315,7 +315,7 @@ namespace TensorN
         auto &_shape = A.shape();
         if (!is_supported_json_type<T>())
         {
-            throw std::runtime_error("Only arithmetic types supported for JSON");
+            TENSOR_THROW("Only arithmetic types supported for JSON");
         }
         nlohmann::json j;
         j["shape"] = _shape;
@@ -353,7 +353,7 @@ namespace TensorN
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".json")
                 fmt = "json";
             else
-                throw std::invalid_argument("Cannot infer format from filename: " + filename);
+                TENSOR_THROW("Cannot infer format from filename: " + filename);
         }
 
         if (fmt == "csv")
@@ -378,7 +378,7 @@ namespace TensorN
         }
         else
         {
-            throw std::invalid_argument("Unsupported format: " + fmt);
+            TENSOR_THROW("Unsupported format: " + fmt);
         }
     }
     template <typename T>
@@ -400,7 +400,7 @@ namespace TensorN
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".json")
                 fmt = "json";
             else
-                throw std::invalid_argument("Cannot infer format from filename: " + filename);
+                TENSOR_THROW("Cannot infer format from filename: " + filename);
         }
 
         if (fmt == "csv")
@@ -425,7 +425,7 @@ namespace TensorN
         }
         else
         {
-            throw std::invalid_argument("Unsupported format: " + fmt);
+            TENSOR_THROW("Unsupported format: " + fmt);
         }
     }
 } // TensorN

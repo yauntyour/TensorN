@@ -25,7 +25,7 @@ namespace TensorN
         {
             cudaError_t err = cudaStreamCreate(&stream_);
             if (err != cudaSuccess)
-                throw std::runtime_error("Failed to create CUDA stream");
+                TENSOR_THROW("Failed to create CUDA stream");
         }
 
         explicit CudaStream(cudaStream_t external) : stream_(external), owns_(false) {}
@@ -202,7 +202,7 @@ namespace TensorN
             void* ptr = nullptr;
             cudaError_t err = cudaMalloc(&ptr, key);
             if (err != cudaSuccess)
-                throw std::runtime_error("CudaMemoryPool: cudaMalloc failed");
+                TENSOR_THROW("CudaMemoryPool: cudaMalloc failed");
 
             buckets_[key].push_back({ptr, key, true});
             cached_bytes_ += key;
@@ -310,7 +310,7 @@ namespace TensorN
             void* ptr = nullptr;
             cudaError_t err = cudaMallocHost(&ptr, key);
             if (err != cudaSuccess)
-                throw std::runtime_error("PinnedMemoryPool: cudaMallocHost failed");
+                TENSOR_THROW("PinnedMemoryPool: cudaMallocHost failed");
 
             buckets_[key].push_back({ptr, key, true});
             return ptr;

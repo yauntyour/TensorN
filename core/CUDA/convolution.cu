@@ -112,7 +112,7 @@ namespace TensorN
                    cudaStream_t stream)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
-                throw std::invalid_argument("conv2d requires 4D tensors");
+                TENSOR_THROW("conv2d requires 4D tensors");
 
             size_t batch = input.shape()[0];
             size_t in_channels = input.shape()[1];
@@ -128,7 +128,7 @@ namespace TensorN
 
             if (output.shape()[0] != batch || output.shape()[1] != out_channels ||
                 output.shape()[2] != out_height || output.shape()[3] != out_width)
-                throw std::invalid_argument("Output tensor has wrong shape");
+                TENSOR_THROW("Output tensor has wrong shape");
 
             size_t total = batch * out_channels * out_height * out_width;
             size_t block_size = 256;
@@ -190,7 +190,7 @@ namespace TensorN
                              cudaStream_t stream)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
-                throw std::invalid_argument("conv_transpose2d requires 4D tensors");
+                TENSOR_THROW("conv_transpose2d requires 4D tensors");
 
             size_t batch = input.shape()[0];
             size_t in_channels = input.shape()[1];
@@ -206,7 +206,7 @@ namespace TensorN
 
             if (output.shape()[0] != batch || output.shape()[1] != out_channels ||
                 output.shape()[2] != out_height || output.shape()[3] != out_width)
-                throw std::invalid_argument("Output tensor has wrong shape");
+                TENSOR_THROW("Output tensor has wrong shape");
 
             size_t total = batch * out_channels * out_height * out_width;
             size_t block_size = 256;

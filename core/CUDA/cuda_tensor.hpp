@@ -27,7 +27,7 @@ namespace TensorN
                 cudaError_t err = cudaMalloc(reinterpret_cast<void**>(&d_data), _size * sizeof(T));
                 if (err != cudaSuccess)
                 {
-                    throw std::runtime_error("CUDA malloc failed: " + std::string(cudaGetErrorString(err)));
+                    TENSOR_THROW("CUDA malloc failed: " + std::string(cudaGetErrorString(err)));
                 }
             }
         }
@@ -136,14 +136,14 @@ namespace TensorN
         {
             if (count != _size)
             {
-                throw std::invalid_argument("Data size mismatch");
+                TENSOR_THROW("Data size mismatch");
             }
             if (d_data && host_data)
             {
                 cudaError_t err = cudaMemcpy(d_data, host_data, count * sizeof(T), cudaMemcpyHostToDevice);
                 if (err != cudaSuccess)
                 {
-                    throw std::runtime_error("CUDA memcpy H2D failed: " + std::string(cudaGetErrorString(err)));
+                    TENSOR_THROW("CUDA memcpy H2D failed: " + std::string(cudaGetErrorString(err)));
                 }
             }
         }
@@ -152,51 +152,51 @@ namespace TensorN
         {
             if (count != _size)
             {
-                throw std::invalid_argument("Data size mismatch");
+                TENSOR_THROW("Data size mismatch");
             }
             if (host_data && d_data)
             {
                 cudaError_t err = cudaMemcpy(host_data, d_data, count * sizeof(T), cudaMemcpyDeviceToHost);
                 if (err != cudaSuccess)
                 {
-                    throw std::runtime_error("CUDA memcpy D2H failed: " + std::string(cudaGetErrorString(err)));
+                    TENSOR_THROW("CUDA memcpy D2H failed: " + std::string(cudaGetErrorString(err)));
                 }
             }
         }
 
         void copyFromHostAsync(const T* host_data, size_t count, cudaStream_t stream)
         {
-            if (count != _size) throw std::invalid_argument("Data size mismatch");
+            if (count != _size) TENSOR_THROW("Data size mismatch");
             if (d_data && host_data)
             {
                 cudaError_t err = cudaMemcpyAsync(d_data, host_data, count * sizeof(T),
                                                    cudaMemcpyHostToDevice, stream);
                 if (err != cudaSuccess)
-                    throw std::runtime_error("CUDA async H2D failed");
+                    TENSOR_THROW("CUDA async H2D failed");
             }
         }
 
         void copyToHostAsync(T* host_data, size_t count, cudaStream_t stream) const
         {
-            if (count != _size) throw std::invalid_argument("Data size mismatch");
+            if (count != _size) TENSOR_THROW("Data size mismatch");
             if (host_data && d_data)
             {
                 cudaError_t err = cudaMemcpyAsync(host_data, d_data, count * sizeof(T),
                                                    cudaMemcpyDeviceToHost, stream);
                 if (err != cudaSuccess)
-                    throw std::runtime_error("CUDA async D2H failed");
+                    TENSOR_THROW("CUDA async D2H failed");
             }
         }
 
         void copyFromDeviceAsync(const T* src, size_t count, cudaStream_t stream)
         {
-            if (count != _size) throw std::invalid_argument("Data size mismatch");
+            if (count != _size) TENSOR_THROW("Data size mismatch");
             if (d_data && src)
             {
                 cudaError_t err = cudaMemcpyAsync(d_data, src, count * sizeof(T),
                                                    cudaMemcpyDeviceToDevice, stream);
                 if (err != cudaSuccess)
-                    throw std::runtime_error("CUDA async D2D failed");
+                    TENSOR_THROW("CUDA async D2D failed");
             }
         }
 
@@ -257,7 +257,7 @@ namespace TensorN
             size_t new_size = 1;
             for (auto& e : new_shape) new_size *= e;
             if (new_size != _size)
-                throw std::invalid_argument("Reshape: total size must match");
+                TENSOR_THROW("Reshape: total size must match");
             CudaTensor<T> result = view();
             result._shape = new_shape;
             return result;
@@ -280,10 +280,11 @@ namespace TensorN
     {
         if (err != cudaSuccess)
         {
-            throw std::runtime_error(
-                std::string("CUDA error at ") + file + ":" + std::to_string(line) + 
-                ": " + std::string(cudaGetErrorString(err)));
+            throw TensorException(
+                std::string("CUDA error: ") + std::string(cudaGetErrorString(err)),
+                file, "TensorN::cuda::checkCudaError", line);
         }
+    }
     }
 
 #define CHECK_CUDA_ERROR(err) checkCudaError(err, __FILE__, __LINE__)

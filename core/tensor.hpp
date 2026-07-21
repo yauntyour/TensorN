@@ -15,8 +15,33 @@
 #include <functional>
 #include "memory_pool.hpp"
 
+#define TENSOR_THROW(msg) \
+    throw TensorN::TensorException(msg, __FILE__, __FUNCTION__, __LINE__)
+
 namespace TensorN
 {
+    class TensorException : public std::runtime_error
+    {
+    public:
+        TensorException(const std::string &message,
+                        const char *file,
+                        const char *function,
+                        int line)
+            : std::runtime_error(
+                  "[TensorN] " + std::string(function) +
+                  " (" + std::string(file) + ":" + std::to_string(line) + "): " + message),
+              _file(file), _function(function), _line(line) {}
+
+        const std::string &file() const { return _file; }
+        const std::string &function() const { return _function; }
+        int line() const { return _line; }
+
+    private:
+        std::string _file;
+        std::string _function;
+        int _line;
+    };
+
     template <typename T>
     class opt;
 
@@ -113,7 +138,7 @@ namespace TensorN
                 _size *= e;
             if (_size != data->size())
             {
-                throw std::invalid_argument("Shape does not match data size.");
+                TENSOR_THROW("Shape does not match data size.");
             }
         }
 
@@ -215,7 +240,7 @@ namespace TensorN
         {
             if (!is_isomorphic(B))
             {
-                throw std::invalid_argument("A and B are not isomorphic Tensors.");
+                TENSOR_THROW("A and B are not isomorphic Tensors.");
             }
             for (size_t i = 0; i < _size; i++)
             {
@@ -227,7 +252,7 @@ namespace TensorN
         {
             if (!is_isomorphic(B))
             {
-                throw std::invalid_argument("A and B are not isomorphic Tensors.");
+                TENSOR_THROW("A and B are not isomorphic Tensors.");
             }
             for (size_t i = 0; i < _size; i++)
             {
@@ -239,7 +264,7 @@ namespace TensorN
         {
             if (!is_isomorphic(B))
             {
-                throw std::invalid_argument("A and B are not isomorphic Tensors.");
+                TENSOR_THROW("A and B are not isomorphic Tensors.");
             }
             for (size_t i = 0; i < _size; i++)
             {
@@ -251,7 +276,7 @@ namespace TensorN
         {
             if (!is_isomorphic(B))
             {
-                throw std::invalid_argument("A and B are not isomorphic Tensors.");
+                TENSOR_THROW("A and B are not isomorphic Tensors.");
             }
             for (size_t i = 0; i < _size; i++)
             {
@@ -341,11 +366,11 @@ namespace TensorN
         {
             if (indices.size() != _shape.size())
             {
-                throw std::invalid_argument("Number of indices must match tensor dimension.");
+                TENSOR_THROW("Number of indices must match tensor dimension.");
             }
             if (!check_indices(indices))
             {
-                throw std::out_of_range("Index out of range.");
+                TENSOR_THROW("Index out of range.");
             }
             return (*data)[flat_index(indices)];
         }
@@ -357,11 +382,11 @@ namespace TensorN
         {
             if (indices.size() != _shape.size())
             {
-                throw std::invalid_argument("Number of indices must match tensor dimension.");
+                TENSOR_THROW("Number of indices must match tensor dimension.");
             }
             if (!check_indices(indices))
             {
-                throw std::out_of_range("Index out of range.");
+                TENSOR_THROW("Index out of range.");
             }
             return (*data)[flat_index(indices)];
         }
@@ -393,7 +418,7 @@ namespace TensorN
 
         Tensor<T>& add_(const Tensor<T>& B)
         {
-            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            if (!is_isomorphic(B)) TENSOR_THROW("Shape mismatch");
             T* __restrict dst = data->data();
             const T* __restrict src = B.data->data();
             for (size_t i = 0; i < _size; ++i) dst[i] += src[i];
@@ -402,7 +427,7 @@ namespace TensorN
 
         Tensor<T>& sub_(const Tensor<T>& B)
         {
-            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            if (!is_isomorphic(B)) TENSOR_THROW("Shape mismatch");
             T* __restrict dst = data->data();
             const T* __restrict src = B.data->data();
             for (size_t i = 0; i < _size; ++i) dst[i] -= src[i];
@@ -411,7 +436,7 @@ namespace TensorN
 
         Tensor<T>& mul_(const Tensor<T>& B)
         {
-            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            if (!is_isomorphic(B)) TENSOR_THROW("Shape mismatch");
             T* __restrict dst = data->data();
             const T* __restrict src = B.data->data();
             for (size_t i = 0; i < _size; ++i) dst[i] *= src[i];
@@ -420,7 +445,7 @@ namespace TensorN
 
         Tensor<T>& div_(const Tensor<T>& B)
         {
-            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            if (!is_isomorphic(B)) TENSOR_THROW("Shape mismatch");
             T* __restrict dst = data->data();
             const T* __restrict src = B.data->data();
             for (size_t i = 0; i < _size; ++i) dst[i] /= src[i];
@@ -466,7 +491,7 @@ namespace TensorN
         template <typename Func>
         Tensor<T>& apply_(const Tensor<T>& B, Func func)
         {
-            if (!is_isomorphic(B)) throw std::invalid_argument("Shape mismatch");
+            if (!is_isomorphic(B)) TENSOR_THROW("Shape mismatch");
             T* __restrict dst = data->data();
             const T* __restrict src = B.data->data();
             for (size_t i = 0; i < _size; ++i) dst[i] = func(dst[i], src[i]);
@@ -505,7 +530,7 @@ namespace TensorN
             size_t new_size = 1;
             for (auto& e : new_shape) new_size *= e;
             if (new_size != _size)
-                throw std::invalid_argument("Reshape: total size must match");
+                TENSOR_THROW("Reshape: total size must match");
             Tensor<T> result = shallow_copy();
             result._shape = new_shape;
             return result;
@@ -642,11 +667,11 @@ namespace TensorN
         // 只支持 1D 或 2D
         if (shape.empty())
         {
-            throw std::invalid_argument("Empty tensor");
+            TENSOR_THROW("Empty tensor");
         }
         if (shape.size() > 2)
         {
-            throw std::invalid_argument("Only 1D or 2D tensors supported for cv::Mat");
+            TENSOR_THROW("Only 1D or 2D tensors supported for cv::Mat");
         }
 
         int rows = (shape.size() == 1) ? 1 : static_cast<int>(shape[0]);
@@ -684,7 +709,7 @@ namespace TensorN
         }
         else
         {
-            throw std::invalid_argument("Unsupported data type for cv::Mat");
+            TENSOR_THROW("Unsupported data type for cv::Mat");
         }
         cv::Mat mat(rows, cols, cv_type);
         std::copy(tensor.data->begin(), tensor.data->end(), reinterpret_cast<T *>(mat.data));

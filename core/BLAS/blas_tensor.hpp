@@ -63,14 +63,14 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if (A.shape().size() != 2 || B.shape().size() != 2)
-                    throw std::invalid_argument("matmul requires 2D tensors");
+                    TENSOR_THROW("matmul requires 2D tensors");
 
                 int M = static_cast<int>(A.shape()[0]);
                 int K = static_cast<int>(A.shape()[1]);
                 int N = static_cast<int>(B.shape()[1]);
 
                 if (B.shape()[0] != static_cast<size_t>(K))
-                    throw std::invalid_argument("Inner dimensions must match");
+                    TENSOR_THROW("Inner dimensions must match");
 
                 Tensor<T> C({static_cast<size_t>(M), static_cast<size_t>(N)});
 
@@ -100,7 +100,7 @@ namespace TensorN
         Tensor<T> batched_matmul(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (A.shape().size() != 3 || B.shape().size() != 3)
-                throw std::invalid_argument("batched_matmul requires 3D tensors");
+                TENSOR_THROW("batched_matmul requires 3D tensors");
 
             size_t batch = A.shape()[0];
             size_t M = A.shape()[1];
@@ -108,7 +108,7 @@ namespace TensorN
             size_t N = B.shape()[2];
 
             if (B.shape()[0] != batch || B.shape()[1] != K)
-                throw std::invalid_argument("Inner dimensions must match");
+                TENSOR_THROW("Inner dimensions must match");
 
             Tensor<T> C({batch, M, N});
 
@@ -150,9 +150,9 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if (A.shape().size() != 1 || B.shape().size() != 1)
-                    throw std::invalid_argument("dot requires 1D tensors");
+                    TENSOR_THROW("dot requires 1D tensors");
                 if (A.shape()[0] != B.shape()[0])
-                    throw std::invalid_argument("Dimension mismatch for dot product");
+                    TENSOR_THROW("Dimension mismatch for dot product");
 
                 if constexpr (std::is_same_v<T, float>)
                     return cblas_sdot(static_cast<int>(A.shape()[0]), A.data->data(), 1, B.data->data(), 1);
@@ -177,7 +177,7 @@ namespace TensorN
             if constexpr (detail::is_blas_type<T>::value)
             {
                 if (v.shape().size() != 1)
-                    throw std::invalid_argument("norm requires a 1D tensor");
+                    TENSOR_THROW("norm requires a 1D tensor");
                 if constexpr (std::is_same_v<T, float>)
                     return cblas_snrm2(static_cast<int>(v.size()), v.data->data(), 1);
                 else
@@ -224,7 +224,7 @@ namespace TensorN
         void axpy(T alpha, const Tensor<T>& x, Tensor<T>& y)
         {
             if (!x.is_isomorphic(y))
-                throw std::invalid_argument("axpy requires matching shapes");
+                TENSOR_THROW("axpy requires matching shapes");
 
 #if TENSORN_HAS_OPENBLAS
             if constexpr (detail::is_blas_type<T>::value)
@@ -269,7 +269,7 @@ namespace TensorN
         Tensor<T> outer(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (A.shape().size() != 1 || B.shape().size() != 1)
-                throw std::invalid_argument("outer requires 1D tensors");
+                TENSOR_THROW("outer requires 1D tensors");
 
             size_t m = A.shape()[0];
             size_t n = B.shape()[0];
@@ -343,7 +343,7 @@ namespace TensorN
         {
             const auto& shape = A.shape();
             if (axis >= shape.size())
-                throw std::invalid_argument("Axis out of range");
+                TENSOR_THROW("Axis out of range");
 
             std::vector<size_t> out_shape;
             for (size_t d = 0; d < shape.size(); ++d)
@@ -402,7 +402,7 @@ namespace TensorN
         T trace(const Tensor<T>& A)
         {
             if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
-                throw std::invalid_argument("trace requires a square matrix");
+                TENSOR_THROW("trace requires a square matrix");
             T result = T(0);
             for (size_t i = 0; i < A.shape()[0]; ++i) result += A[{i, i}];
             return result;
@@ -416,7 +416,7 @@ namespace TensorN
         Tensor<T> hadamard(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (!A.is_isomorphic(B))
-                throw std::invalid_argument("Tensors must have same shape for Hadamard product");
+                TENSOR_THROW("Tensors must have same shape for Hadamard product");
             Tensor<T> result(A.shape());
             const T* __restrict a = A.data->data();
             const T* __restrict b = B.data->data();
@@ -454,7 +454,7 @@ namespace TensorN
         Tensor<T> diag(const Tensor<T>& A)
         {
             if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
-                throw std::invalid_argument("diag requires a square matrix");
+                TENSOR_THROW("diag requires a square matrix");
             size_t n = A.shape()[0];
             Tensor<T> result({n});
             for (size_t i = 0; i < n; ++i) result[i] = A[{i, i}];
@@ -465,7 +465,7 @@ namespace TensorN
         Tensor<T> diag_matrix(const Tensor<T>& v)
         {
             if (v.shape().size() != 1)
-                throw std::invalid_argument("diag_matrix requires a 1D tensor");
+                TENSOR_THROW("diag_matrix requires a 1D tensor");
             size_t n = v.shape()[0];
             Tensor<T> result({n, n});
             for (size_t i = 0; i < n; ++i) result[{i, i}] = v[i];
@@ -480,7 +480,7 @@ namespace TensorN
         Tensor<T> gram(const Tensor<T>& X)
         {
             if (X.shape().size() != 2)
-                throw std::invalid_argument("gram requires 2D tensor");
+                TENSOR_THROW("gram requires 2D tensor");
 
             size_t M = X.shape()[0];
             size_t N = X.shape()[1];
@@ -515,9 +515,9 @@ namespace TensorN
         T bilinear(const Tensor<T>& x, const Tensor<T>& A, const Tensor<T>& y)
         {
             if (x.shape().size() != 1 || A.shape().size() != 2 || y.shape().size() != 1)
-                throw std::invalid_argument("bilinear: x must be 1D, A must be 2D, y must be 1D");
+                TENSOR_THROW("bilinear: x must be 1D, A must be 2D, y must be 1D");
             if (x.shape()[0] != A.shape()[0] || A.shape()[1] != y.shape()[0])
-                throw std::invalid_argument("Dimension mismatch for bilinear form");
+                TENSOR_THROW("Dimension mismatch for bilinear form");
 
             Tensor<T> temp({A.shape()[0]});
 
@@ -628,7 +628,7 @@ namespace TensorN
         Tensor<T> add(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (!A.is_isomorphic(B))
-                throw std::invalid_argument("Tensors must have same shape for addition");
+                TENSOR_THROW("Tensors must have same shape for addition");
             Tensor<T> result(A.shape());
             const T* __restrict a = A.data->data();
             const T* __restrict b = B.data->data();
@@ -649,7 +649,7 @@ namespace TensorN
             size_t ndim = A.shape().size();
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Softmax axis out of range");
+                TENSOR_THROW("Softmax axis out of range");
 
             Tensor<T> result(A.shape());
 
@@ -706,7 +706,7 @@ namespace TensorN
                 }
             }
 
-            throw std::runtime_error("Softmax: only 1D/2D supported");
+            TENSOR_THROW("Softmax: only 1D/2D supported");
         }
 
         // ================================================================
@@ -720,7 +720,7 @@ namespace TensorN
             size_t ndim = shape.size();
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Argmax axis out of range");
+                TENSOR_THROW("Argmax axis out of range");
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -756,7 +756,7 @@ namespace TensorN
             size_t ndim = shape.size();
             if (axis < 0) axis = static_cast<int>(ndim) + axis;
             if (axis < 0 || static_cast<size_t>(axis) >= ndim)
-                throw std::invalid_argument("Argmin axis out of range");
+                TENSOR_THROW("Argmin axis out of range");
 
             size_t outer = 1, reduce_dim = shape[axis], inner = 1;
             for (size_t d = 0; d < static_cast<size_t>(axis); ++d) outer *= shape[d];
@@ -793,7 +793,7 @@ namespace TensorN
         Tensor<int> equal(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (!A.is_isomorphic(B))
-                throw std::invalid_argument("Tensors must have same shape for equal");
+                TENSOR_THROW("Tensors must have same shape for equal");
             Tensor<int> result(A.shape());
             const T* __restrict a = A.data->data();
             const T* __restrict b = B.data->data();
@@ -809,7 +809,7 @@ namespace TensorN
         Tensor<int> greater(const Tensor<T>& A, const Tensor<T>& B)
         {
             if (!A.is_isomorphic(B))
-                throw std::invalid_argument("Tensors must have same shape for greater");
+                TENSOR_THROW("Tensors must have same shape for greater");
             Tensor<int> result(A.shape());
             const T* __restrict a = A.data->data();
             const T* __restrict b = B.data->data();
@@ -891,9 +891,9 @@ namespace TensorN
                          const Tensor<T>& bias, int stride = 1, int padding = 0)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4)
-                throw std::invalid_argument("conv2d: input and weight must be 4D");
+                TENSOR_THROW("conv2d: input and weight must be 4D");
             if (bias.shape().size() != 1)
-                throw std::invalid_argument("conv2d: bias must be 1D");
+                TENSOR_THROW("conv2d: bias must be 1D");
 
             size_t N = input.shape()[0], C = input.shape()[1];
             size_t H = input.shape()[2], W = input.shape()[3];
@@ -904,7 +904,7 @@ namespace TensorN
             int64_t oW = static_cast<int64_t>((W + 2 * padding - kW) / stride) + 1;
 
             if (oH <= 0 || oW <= 0)
-                throw std::invalid_argument("conv2d: invalid output dimensions");
+                TENSOR_THROW("conv2d: invalid output dimensions");
 
             Tensor<T> output({N, K, static_cast<size_t>(oH), static_cast<size_t>(oW)});
 
@@ -981,7 +981,7 @@ namespace TensorN
                          int stride = 1, int padding = 0)
         {
             if (weight.shape().size() != 4)
-                throw std::invalid_argument("conv2d: weight must be 4D");
+                TENSOR_THROW("conv2d: weight must be 4D");
             Tensor<T> bias({weight.shape()[0]});
             return conv2d(input, weight, bias, stride, padding);
         }
@@ -995,9 +995,9 @@ namespace TensorN
                                    const Tensor<T>& bias, int stride = 1, int padding = 0)
         {
             if (input.shape().size() != 4 || weight.shape().size() != 4)
-                throw std::invalid_argument("conv_transpose2d: input and weight must be 4D");
+                TENSOR_THROW("conv_transpose2d: input and weight must be 4D");
             if (bias.shape().size() != 1)
-                throw std::invalid_argument("conv_transpose2d: bias must be 1D");
+                TENSOR_THROW("conv_transpose2d: bias must be 1D");
 
             size_t N = input.shape()[0], C = input.shape()[1];
             size_t H = input.shape()[2], W = input.shape()[3];
@@ -1008,7 +1008,7 @@ namespace TensorN
             size_t oW = (W - 1) * stride + kW - 2 * padding;
 
             if (oH == 0 || oW == 0)
-                throw std::invalid_argument("conv_transpose2d: invalid output dimensions");
+                TENSOR_THROW("conv_transpose2d: invalid output dimensions");
 
             Tensor<T> output({N, K, oH, oW});
             output.zero_();

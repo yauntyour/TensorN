@@ -119,11 +119,11 @@ void matmul_activation(const CudaTensor<T>& A, const CudaTensor<T>& B,
                        cudaStream_t stream)
 {
     if (A.shape().size() != 2 || B.shape().size() != 2 || C.shape().size() != 2)
-        throw std::invalid_argument("matmul_activation requires 2D tensors");
+        TENSOR_THROW("matmul_activation requires 2D tensors");
 
     size_t M = A.shape()[0], K = A.shape()[1], N = B.shape()[1];
     if (B.shape()[0] != K || C.shape()[0] != M || C.shape()[1] != N)
-        throw std::invalid_argument("matmul_activation dimension mismatch");
+        TENSOR_THROW("matmul_activation dimension mismatch");
 
     auto& blas_handle = get_stream_blas_handle();
     blas_handle.set_stream(stream);

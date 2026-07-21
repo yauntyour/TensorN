@@ -89,7 +89,7 @@ namespace TensorN
             }
 
             if (cleaned.empty())
-                throw std::invalid_argument("Empty einsum expression");
+                TENSOR_THROW("Empty einsum expression");
 
             size_t arrow_pos = cleaned.find("->");
 
@@ -117,7 +117,7 @@ namespace TensorN
             result.input_labels.push_back(input_part.substr(start));
 
             if (result.input_labels.empty())
-                throw std::invalid_argument("No input tensors specified");
+                TENSOR_THROW("No input tensors specified");
 
             for (const auto &input : result.input_labels)
             {
@@ -132,7 +132,7 @@ namespace TensorN
                     }
                 }
                 if (count > 1)
-                    throw std::invalid_argument("Multiple ellipsis in single input tensor");
+                    TENSOR_THROW("Multiple ellipsis in single input tensor");
             }
 
             if (result.has_arrow)
@@ -148,7 +148,7 @@ namespace TensorN
                     }
                 }
                 if (count > 1)
-                    throw std::invalid_argument("Multiple ellipsis in output");
+                    TENSOR_THROW("Multiple ellipsis in output");
 
                 result.output_labels = output_part;
             }
@@ -217,7 +217,7 @@ namespace TensorN
                 {
                     if (result.label_to_size[label] != dim_size)
                     {
-                        throw std::invalid_argument(
+                        TENSOR_THROW(
                             "Inconsistent dimension size for label '" + label +
                             "': expected " + std::to_string(result.label_to_size[label]) +
                             ", got " + std::to_string(dim_size));
@@ -251,7 +251,7 @@ namespace TensorN
 
                 if (explicit_count > shape.size())
                 {
-                    throw std::invalid_argument(
+                    TENSOR_THROW(
                         "Number of explicit labels (" + std::to_string(explicit_count) +
                         ") exceeds tensor " + std::to_string(i) +
                         " dimension (" + std::to_string(shape.size()) + ")");
@@ -274,7 +274,7 @@ namespace TensorN
                     }
                     else if (ellipsis_anon_labels.size() != ndim)
                     {
-                        throw std::invalid_argument(
+                        TENSOR_THROW(
                             "Inconsistent ellipsis dimensions across input tensors");
                     }
 
@@ -300,7 +300,7 @@ namespace TensorN
 
                     if (dim_idx >= shape.size())
                     {
-                        throw std::invalid_argument(
+                        TENSOR_THROW(
                             "Label index out of bounds for tensor " + std::to_string(i));
                     }
 
@@ -359,7 +359,7 @@ namespace TensorN
 
                 if (result.label_to_size.find(label) == result.label_to_size.end())
                 {
-                    throw std::invalid_argument(
+                    TENSOR_THROW(
                         "Output label not found in input labels");
                 }
             }
@@ -389,7 +389,7 @@ namespace TensorN
 
                     if (output_set.count(label))
                     {
-                        throw std::invalid_argument(
+                        TENSOR_THROW(
                             "Duplicate label in output");
                     }
                     output_set.insert(label);
@@ -415,11 +415,11 @@ namespace TensorN
         EinsumExpr expr = parse_expression(exp);
 
         if (tensors.empty())
-            throw std::invalid_argument("No input tensors provided");
+            TENSOR_THROW("No input tensors provided");
 
         if (expr.input_labels.size() != tensors.size())
         {
-            throw std::invalid_argument(
+            TENSOR_THROW(
                 "Expected " + std::to_string(expr.input_labels.size()) +
                 " input tensors, got " + std::to_string(tensors.size()));
         }
@@ -451,7 +451,7 @@ namespace TensorN
                 auto it = idx.label_to_size.find(label);
                 if (it == idx.label_to_size.end())
                 {
-                    throw std::invalid_argument("Output label not found in label map");
+                    TENSOR_THROW("Output label not found in label map");
                 }
                 output_shape.push_back(it->second);
             }
