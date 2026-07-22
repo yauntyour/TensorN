@@ -285,7 +285,6 @@ namespace TensorN
                 file, "TensorN::cuda::checkCudaError", line);
         }
     }
-    }
 
 #define CHECK_CUDA_ERROR(err) checkCudaError(err, __FILE__, __LINE__)
 

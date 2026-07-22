@@ -90,7 +90,9 @@ endif()
 # ============================================================================
 # nlohmann/json (header-only)
 # ============================================================================
-find_package(nlohmann_json 3.11.3 QUIET)
+if(NOT (TENSORN_ENABLE_CUDA AND MSVC))
+    find_package(nlohmann_json 3.11.3 QUIET)
+endif()
 if(NOT nlohmann_json_FOUND)
     message(STATUS "nlohmann_json not found locally, fetching from GitHub...")
     FetchContent_Declare(
@@ -107,7 +109,9 @@ endif()
 # ============================================================================
 # ZLIB Configuration (required for cnpy)
 # ============================================================================
-find_package(ZLIB QUIET)
+if(NOT (TENSORN_ENABLE_CUDA AND MSVC))
+    find_package(ZLIB QUIET)
+endif()
 if(NOT ZLIB_FOUND)
     message(STATUS "ZLIB not found locally, fetching from GitHub...")
     FetchContent_Declare(
@@ -191,6 +195,15 @@ endif()
 # ============================================================================
 # OpenBlas Configuration
 # ============================================================================
+if(TENSORN_ENABLE_OPENBLAS AND OpenBLAS_FOUND)
+    if(MSVC AND OpenBLAS_LIBRARY MATCHES "\\.a$")
+        message(WARNING "OpenBLAS found as MinGW .a library: ${OpenBLAS_LIBRARY}")
+        message(WARNING "MSVC cannot link MinGW .a files. Disabling OpenBLAS support.")
+        message(WARNING "Install OpenBLAS via vcpkg or use an MSVC-compatible build.")
+        set(TENSORN_ENABLE_OPENBLAS OFF)
+    endif()
+endif()
+
 if(TENSORN_ENABLE_OPENBLAS AND OpenBLAS_FOUND)
     target_include_directories(TensorN INTERFACE ${OpenBLAS_INCLUDE_DIRS})
     target_link_libraries(TensorN INTERFACE ${OpenBLAS_LIBRARIES})
