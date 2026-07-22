@@ -184,9 +184,9 @@ __global__ void softmax_max(const T* input, T* row_max, size_t rows, size_t cols
 }
 template <typename T>
 __global__ void softmax_exp_sum(const T* input, const T* row_max, T* output, T* row_sum, size_t rows, size_t cols) {
-    size_t row = blockIdx.x, col = threadIdx.x;
-    if (row >= rows || col >= cols) return;
-    size_t idx = row * cols + col;
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= rows * cols) return;
+    size_t row = idx / cols;
     T v = ::exp(input[idx] - row_max[row]);
     output[idx] = v;
     atomicAdd(&row_sum[row], v);
@@ -215,11 +215,11 @@ void softmax_2d_axis1(const CudaTensor<T>& A, CudaTensor<T>& C) {
 
     softmax_max<<<rows, 1>>>(A.device_ptr(), d_row_max, rows, cols);
     CHECK_CUDA_ERROR(cudaGetLastError());
-    softmax_exp_sum<<<rows, cols>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
-    CHECK_CUDA_ERROR(cudaGetLastError());
-
     size_t total = rows * cols;
     size_t bs = 256, gs = (total + bs - 1) / bs;
+    softmax_exp_sum<<<gs, bs>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+
     softmax_normalize<<<gs, bs>>>(temp.device_ptr(), d_row_sum, rows, cols);
     CHECK_CUDA_ERROR(cudaGetLastError());
 
@@ -250,8 +250,8 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMemsetAsync(d_sum, 0, sizeof(T), stream);
         CudaTensor<T> temp(A.shape());
         softmax_max<<<1,1,0,stream>>>(A.device_ptr(), d_max, 1, n);
-        softmax_exp_sum<<<1,n,0,stream>>>(A.device_ptr(), d_max, temp.device_ptr(), d_sum, 1, n);
         size_t bs=256, gs=(n+bs-1)/bs;
+        softmax_exp_sum<<<gs,bs,0,stream>>>(A.device_ptr(), d_max, temp.device_ptr(), d_sum, 1, n);
         softmax_normalize<<<gs,bs,0,stream>>>(temp.device_ptr(), d_sum, 1, n);
         C = std::move(temp); cudaFree(d_max); cudaFree(d_sum);
         return;
@@ -264,8 +264,8 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMemsetAsync(d_row_sum, 0, rows * sizeof(T), stream);
         CudaTensor<T> temp({rows, cols});
         softmax_max<<<rows, 1, 0, stream>>>(A.device_ptr(), d_row_max, rows, cols);
-        softmax_exp_sum<<<rows, cols, 0, stream>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
         size_t total = rows * cols, bs = 256, gs = (total + bs - 1) / bs;
+        softmax_exp_sum<<<gs, bs, 0, stream>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
         softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, rows, cols);
         C = std::move(temp);
         cudaFree(d_row_max); cudaFree(d_row_sum);
@@ -282,7 +282,7 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMemsetAsync(d_row_sum, 0, cols * sizeof(T), stream);
         CudaTensor<T> temp({cols, rows});
         softmax_max<<<cols, 1, 0, stream>>>(At.device_ptr(), d_row_max, cols, rows);
-        softmax_exp_sum<<<cols, rows, 0, stream>>>(At.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, cols, rows);
+        softmax_exp_sum<<<gs, bs, 0, stream>>>(At.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, cols, rows);
         softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, cols, rows);
         kernels::transpose_back<<<gs,bs,0,stream>>>(temp.device_ptr(), C.device_ptr(), cols, rows);
         cudaFree(d_row_max); cudaFree(d_row_sum);
