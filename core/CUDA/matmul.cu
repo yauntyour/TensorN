@@ -84,22 +84,6 @@ namespace TensorN
             C_batch[mn] = sum;
         }
 
-        namespace
-        {
-            struct CublasHandle
-            {
-                cublasHandle_t handle;
-                CublasHandle() { cublasCreate(&handle); }
-                ~CublasHandle() { cublasDestroy(handle); }
-            };
-
-            inline cublasHandle_t get_handle()
-            {
-                static CublasHandle h;
-                return h.handle;
-            }
-        }
-
         template <typename T>
         void matmul_cublas(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C, cudaStream_t stream)
         {
