@@ -129,18 +129,24 @@ void matmul_activation(const CudaTensor<T>& A, const CudaTensor<T>& B,
     blas_handle.set_stream(stream);
 
     T alpha = T(1), beta = T(0);
+    cublasStatus_t stat;
     if constexpr (std::is_same_v<T, float>)
-        cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+        stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
             static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
             &alpha, B.device_ptr(), static_cast<int>(N),
             A.device_ptr(), static_cast<int>(K),
             &beta, C.device_ptr(), static_cast<int>(N));
     else if constexpr (std::is_same_v<T, double>)
-        cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+        stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
             static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
             &alpha, B.device_ptr(), static_cast<int>(N),
             A.device_ptr(), static_cast<int>(K),
             &beta, C.device_ptr(), static_cast<int>(N));
+    else
+        TENSOR_THROW("matmul_activation only supports float/double");
+
+    if (stat != CUBLAS_STATUS_SUCCESS)
+        TENSOR_THROW("cuBLAS gemm failed in matmul_activation");
 
     if (act != ActivationType::None)
     {

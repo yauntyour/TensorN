@@ -54,7 +54,7 @@ __global__ void negate(const T* A, T* C, size_t n) {
 template <typename T>
 __global__ void abs(const T* A, T* C, size_t n) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) C[idx] = ::abs(A[idx]);
+    if (idx < n) C[idx] = std::abs(A[idx]);
 }
 template <typename T>
 __global__ void sqrt(const T* A, T* C, size_t n) {
@@ -174,13 +174,32 @@ __global__ void transpose_back(const T* in, T* out, size_t rows, size_t cols) {
 
 template <typename T>
 __global__ void softmax_max(const T* input, T* row_max, size_t rows, size_t cols) {
+    extern __shared__ char shared_mem[];
+    T* sdata = reinterpret_cast<T*>(shared_mem);
     size_t row = blockIdx.x;
     if (row >= rows) return;
     const T* row_ptr = input + row * cols;
-    T mx = row_ptr[0];
-    for (size_t j = 1; j < cols; ++j)
-        if (row_ptr[j] > mx) mx = row_ptr[j];
-    row_max[row] = mx;
+    
+    // Each thread handles multiple elements if cols > blockDim.x
+    T local_max = std::numeric_limits<T>::lowest();
+    for (size_t j = threadIdx.x; j < cols; j += blockDim.x) {
+        T val = row_ptr[j];
+        if (val > local_max) local_max = val;
+    }
+    
+    sdata[threadIdx.x] = local_max;
+    __syncthreads();
+    
+    // Reduction in shared memory
+    for (size_t s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            if (sdata[threadIdx.x + s] > sdata[threadIdx.x])
+                sdata[threadIdx.x] = sdata[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    
+    if (threadIdx.x == 0) row_max[row] = sdata[0];
 }
 template <typename T>
 __global__ void softmax_exp_sum(const T* input, const T* row_max, T* output, T* row_sum, size_t rows, size_t cols) {
@@ -213,7 +232,7 @@ void softmax_2d_axis1(const CudaTensor<T>& A, CudaTensor<T>& C) {
     cudaMemset(d_row_sum, 0, rows * sizeof(T));
     CudaTensor<T> temp({rows, cols});
 
-    softmax_max<<<rows, 1>>>(A.device_ptr(), d_row_max, rows, cols);
+    softmax_max<<<rows, 256, 256 * sizeof(T)>>>(A.device_ptr(), d_row_max, rows, cols);
     CHECK_CUDA_ERROR(cudaGetLastError());
     size_t total = rows * cols;
     size_t bs = 256, gs = (total + bs - 1) / bs;
@@ -249,7 +268,7 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMalloc(reinterpret_cast<void**>(&d_sum), sizeof(T));
         cudaMemsetAsync(d_sum, 0, sizeof(T), stream);
         CudaTensor<T> temp(A.shape());
-        softmax_max<<<1,1,0,stream>>>(A.device_ptr(), d_max, 1, n);
+        softmax_max<<<1,256,256*sizeof(T),stream>>>(A.device_ptr(), d_max, 1, n);
         size_t bs=256, gs=(n+bs-1)/bs;
         softmax_exp_sum<<<gs,bs,0,stream>>>(A.device_ptr(), d_max, temp.device_ptr(), d_sum, 1, n);
         softmax_normalize<<<gs,bs,0,stream>>>(temp.device_ptr(), d_sum, 1, n);
@@ -263,7 +282,7 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMalloc(reinterpret_cast<void**>(&d_row_sum), rows * sizeof(T));
         cudaMemsetAsync(d_row_sum, 0, rows * sizeof(T), stream);
         CudaTensor<T> temp({rows, cols});
-        softmax_max<<<rows, 1, 0, stream>>>(A.device_ptr(), d_row_max, rows, cols);
+        softmax_max<<<rows, 256, 256*sizeof(T), stream>>>(A.device_ptr(), d_row_max, rows, cols);
         size_t total = rows * cols, bs = 256, gs = (total + bs - 1) / bs;
         softmax_exp_sum<<<gs, bs, 0, stream>>>(A.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, rows, cols);
         softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, rows, cols);
@@ -281,7 +300,7 @@ void softmax(const CudaTensor<T>& A, CudaTensor<T>& C, int axis, cudaStream_t st
         cudaMalloc(reinterpret_cast<void**>(&d_row_sum), cols * sizeof(T));
         cudaMemsetAsync(d_row_sum, 0, cols * sizeof(T), stream);
         CudaTensor<T> temp({cols, rows});
-        softmax_max<<<cols, 1, 0, stream>>>(At.device_ptr(), d_row_max, cols, rows);
+        softmax_max<<<cols, 256, 256*sizeof(T), stream>>>(At.device_ptr(), d_row_max, cols, rows);
         softmax_exp_sum<<<gs, bs, 0, stream>>>(At.device_ptr(), d_row_max, temp.device_ptr(), d_row_sum, cols, rows);
         softmax_normalize<<<gs, bs, 0, stream>>>(temp.device_ptr(), d_row_sum, cols, rows);
         kernels::transpose_back<<<gs,bs,0,stream>>>(temp.device_ptr(), C.device_ptr(), cols, rows);
