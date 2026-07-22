@@ -31,6 +31,17 @@
 #include <algorithm>
 #include <type_traits>
 #include <cstring>
+#include <cstdint>
+
+#ifndef __restrict
+#if defined(__GNUC__) || defined(__clang__)
+#define __restrict __restrict__
+#elif defined(_MSC_VER)
+#define __restrict __restrict
+#else
+#define __restrict
+#endif
+#endif
 
 namespace TensorN
 {

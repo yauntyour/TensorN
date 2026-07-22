@@ -3,7 +3,7 @@
 #define __DATA__H__
 
 #include <vector>
-#include <stdint.h>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <stdexcept>
@@ -14,6 +14,16 @@
 #include <cassert>
 #include <functional>
 #include "memory_pool.hpp"
+
+#ifndef __restrict
+#if defined(__GNUC__) || defined(__clang__)
+#define __restrict __restrict__
+#elif defined(_MSC_VER)
+#define __restrict __restrict
+#else
+#define __restrict
+#endif
+#endif
 
 #define TENSOR_THROW(msg) \
     throw TensorN::TensorException(msg, __FILE__, __FUNCTION__, __LINE__)
@@ -84,7 +94,7 @@ namespace TensorN
                        << std::string(indent + 2, ' ');
 
                 size_t stride = std::accumulate(shape.begin() + dim + 1,
-                                                shape.end(), 1,
+                                                shape.end(), size_t(1),
                                                 std::multiplies<size_t>());
 
                 for (size_t i = 0; i < shape[dim]; ++i)

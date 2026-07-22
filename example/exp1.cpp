@@ -1,41 +1,86 @@
 #include "TensorN.hpp"
 #include <iostream>
 
+using namespace TensorN;
+
 int main()
 {
-    using namespace TensorN;
+    std::cout << "=== exp1: Tensor Creation & Manipulation ===\n" << std::endl;
 
-    // 创建张量
+    // 1. Constructors
+    std::cout << "1. Construction:" << std::endl;
     Tensor<int> A({2, 3}, {1, 2, 3, 4, 5, 6});
-    Tensor<int> B({3, 2}, {1, 2, 3, 4, 5, 6});
+    Tensor<int> B({2, 3});   // uninitialized
+    Tensor<int> C(A);        // copy
+    Tensor<int> D(std::move(A)); // move (A becomes empty)
+    std::cout << "  B (shape 2x3, uninit) = " << B << std::endl;
+    std::cout << "  C (copy) = " << C << std::endl;
+    std::cout << "  D (moved) = " << D << std::endl;
 
-    // 使用 << 运算符输出
-    std::cout << "A = " << A << std::endl;
-    // 输出: A = [[1, 2, 3], [4, 5, 6]]
+    // 2. Factory functions
+    std::cout << "\n2. Factory functions:" << std::endl;
+    auto Z = zeros<float>({2, 3});
+    auto O = ones<int>({3, 2});
+    auto I = eye<double>(4);
+    auto R = arange<int>(0, 10, 2);
 
-    std::cout << "B = " << B << std::endl;
+    std::cout << "  zeros<float>(2,3) = " << Z << std::endl;
+    std::cout << "  ones<int>(3,2) = " << O << std::endl;
+    std::cout << "  eye<double>(4) = " << I << std::endl;
+    std::cout << "  arange<int>(0,10,2) = " << R << std::endl;
 
-    // 矩阵乘法
-    auto C = matmul(A, B);
-    std::cout << "A * B = " << C << std::endl;
+    // 3. Indexing
+    std::cout << "\n3. Indexing:" << std::endl;
+    Tensor<int> M({3, 3}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    std::cout << "  M = " << M << std::endl;
+    std::cout << "  M[{0,0}] = " << M[{0, 0}] << std::endl;
+    std::cout << "  M[{1,2}] = " << M[{1, 2}] << std::endl;
+    std::cout << "  M[4] (flat) = " << M[4] << std::endl;
 
-    // 使用工厂函数
-    auto Z = zeros<float>({2, 2});
-    auto I = eye<double>(3);
+    // 4. Shape and size
+    std::cout << "\n4. Shape & size:" << std::endl;
+    std::cout << "  M.shape() = {";
+    for (auto s : M.shape()) std::cout << s << " ";
+    std::cout << "}" << std::endl;
+    std::cout << "  M.size() = " << M.size() << std::endl;
 
-    std::cout << "\nZeros: " << Z << std::endl;
-    std::cout << "Identity: " << I << std::endl;
+    // 5. Clone, view, shallow_copy
+    std::cout << "\n5. Clone & view:" << std::endl;
+    auto clone = M.clone();
+    auto view = M.view();
+    M[{0, 0}] = 99;
+    std::cout << "  After M[{0,0}]=99:" << std::endl;
+    std::cout << "  M     = " << M << std::endl;
+    std::cout << "  clone = " << clone << "  (unchanged)" << std::endl;
+    std::cout << "  view  = " << view << "  (reflects change)" << std::endl;
 
-    // 向量点积
-    Tensor<int> v1({3}, {1, 2, 3});
-    Tensor<int> v2({3}, {4, 5, 6});
-    auto dot_product = dot(v1, v2);
-    std::cout << "\nv1 · v2 = " << dot_product << std::endl;
+    // 6. Reshape
+    std::cout << "\n6. Reshape:" << std::endl;
+    auto R2 = M.reshape({1, 9});
+    std::cout << "  M.reshape({1,9}) = " << R2 << std::endl;
 
-    // 标量运算
-    auto A_plus_10 = A + 10;
-    std::cout << "\nA + 10 = " << A_plus_10 << std::endl;
+    // 7. fill / zero
+    std::cout << "\n7. fill_ / zero_:" << std::endl;
+    Tensor<int> F({2, 2}, {1, 2, 3, 4});
+    std::cout << "  before: " << F << std::endl;
+    F.fill_(42);
+    std::cout << "  after fill_(42): " << F << std::endl;
+    F.zero_();
+    std::cout << "  after zero_(): " << F << std::endl;
 
+    // 8. Scalar tensor
+    std::cout << "\n8. Scalar tensor:" << std::endl;
+    Tensor<float> s({}, {3.14f});
+    std::cout << "  scalar = " << s << std::endl;
+    std::cout << "  s[0] = " << s[0] << std::endl;
+
+    // 9. Equality check
+    std::cout << "\n9. Equality:" << std::endl;
+    Tensor<int> X({2}, {1, 2});
+    Tensor<int> Y({2}, {1, 2});
+    Tensor<int> W({2}, {3, 4});
+    std::cout << "  X == Y: " << (X == Y ? "true" : "false") << std::endl;
+    std::cout << "  X == W: " << (X == W ? "true" : "false") << std::endl;
 
     return 0;
 }

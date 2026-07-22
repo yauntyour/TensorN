@@ -90,7 +90,7 @@ namespace TensorN
     }
 
     template <typename T>
-    static Tensor<T> load_csv(const std::string &filename)
+    Tensor<T> load_csv(const std::string &filename)
     {
         std::ifstream file(filename);
         if (!file)
@@ -156,7 +156,7 @@ namespace TensorN
     }
 
     template <typename T>
-    static Tensor<T> load_npy(const std::string &filename)
+    Tensor<T> load_npy(const std::string &filename)
     {
         cnpy::NpyArray arr = cnpy::npy_load(filename);
         if (arr.word_size != sizeof(T))
@@ -183,7 +183,7 @@ namespace TensorN
         cnpy::npz_save(filename, "arr_0", A.data->data(), shape, "w");
     }
     template <typename T>
-    static Tensor<T> load_npz(const std::string &filename)
+    Tensor<T> load_npz(const std::string &filename)
     {
         // 加载整个 .npz 文件为 map<string, NpyArray>
         auto npz_map = cnpy::npz_load(filename);
@@ -256,7 +256,7 @@ namespace TensorN
     }
 
     template <typename T>
-    static Tensor<T> load_pt(const std::string &filename)
+    Tensor<T> load_pt(const std::string &filename)
     {
         std::ifstream file(filename, std::ios::binary);
         if (!file)
@@ -325,7 +325,7 @@ namespace TensorN
     }
 
     template <typename T>
-    static Tensor<T> load_json(const std::string &filename)
+    Tensor<T> load_json(const std::string &filename)
     {
         std::ifstream file(filename);
         nlohmann::json j;
@@ -366,7 +366,7 @@ namespace TensorN
         }
         else if (fmt == "npz")
         {
-            return save_npz<T>(*this, filename);
+            save_npz<T>(*this, filename);
         }
         else if (fmt == "pt")
         {

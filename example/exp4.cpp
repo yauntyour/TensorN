@@ -1,139 +1,113 @@
-#include <iostream>
-#include <vector>
 #include "TensorN.hpp"
+#include <iostream>
 
 using namespace TensorN;
 
-// 简单的打印函数（假设 Tensor 支持 operator<< 或提供 data() 和 shape()）
-template <typename T>
-void print_tensor(const std::string &name, const opt<T> &t)
-{
-    std::cout << name << " =\n";
-    // 假设 Tensor 有友元 ostream 或提供访问方式
-    // 这里简化：若 opt<T> 是 Tensor<T> 别名，则直接输出
-    std::cout << t.tensor << "\n\n";
-}
-
-// 特化标量打印
-template <typename T>
-void print_scalar(const std::string &name, T val)
-{
-    std::cout << name << " = " << val << "\n\n";
-}
-
 int main()
 {
-    try
-    {
-        // === 向量 ===
-        Tensor<double> v1({3}, {1.0, 2.0, 3.0});
-        Tensor<double> v2({3}, {4.0, 5.0, 6.0});
+    std::cout << "=== exp4: Einstein Summation (einsum) ===\n" << std::endl;
 
-        // === 矩阵 ===
-        Tensor<double> M1({2, 3}, {1.0, 2.0, 3.0,
-                                   4.0, 5.0, 6.0});
-        Tensor<double> M2({3, 2}, {7.0, 8.0,
-                                   9.0, 10.0,
-                                   11.0, 12.0});
-        Tensor<double> Sq({3, 3}, {1.0, 2.0, 3.0,
-                                   4.0, 5.0, 6.0,
-                                   7.0, 8.0, 9.0});
+    // 1. Basic matrix multiplication: ij,jk->ik
+    std::cout << "1. Matrix multiplication (ij,jk->ik):" << std::endl;
+    Tensor<int> A({2, 3}, {1, 2, 3, 4, 5, 6});
+    Tensor<int> B({3, 2}, {7, 8, 9, 10, 11, 12});
+    auto C1 = einsum<int>("ij,jk->ik", A, B);
+    std::cout << "  " << C1 << std::endl;
+    std::cout << "  verify vs matmul: " << matmul(A, B).tensor[0] << "==" << C1.tensor[0] << std::endl;
 
-        // === 测试 dot ===
-        auto dot_res = dot(v1, v2);
-        print_scalar("dot(v1, v2)", dot_res[0]);
+    // 2. Dot product: i,i->
+    std::cout << "\n2. Dot product (i,i->):" << std::endl;
+    Tensor<float> v1({4}, {1.0f, 2.0f, 3.0f, 4.0f});
+    Tensor<float> v2({4}, {0.5f, 1.5f, 2.5f, 3.5f});
+    auto dot_r = einsum<float>("i,i->", v1, v2);
+    std::cout << "  " << dot_r << std::endl;
 
-        // === 测试 outer ===
-        auto outer_res = outer(v1, v2);
-        print_tensor("outer(v1, v2)", outer_res);
+    // 3. Outer product: i,j->ij
+    std::cout << "\n3. Outer product (i,j->ij):" << std::endl;
+    Tensor<int> a({3}, {1, 2, 3});
+    Tensor<int> b({4}, {4, 5, 6, 7});
+    auto outer_r = einsum<int>("i,j->ij", a, b);
+    std::cout << "  " << outer_r << std::endl;
 
-        // === 测试 matmul ===
-        auto matmul_res = matmul(M1, M2);
-        print_tensor("matmul(M1, M2)", matmul_res);
+    // 4. Element-wise multiply: ij,ij->ij
+    std::cout << "\n4. Element-wise multiply (ij,ij->ij):" << std::endl;
+    Tensor<double> M1({2, 3}, {1.1, 2.2, 3.3, 4.4, 5.5, 6.6});
+    Tensor<double> M2({2, 3}, {0.5, 1.0, 1.5, 2.0, 2.5, 3.0});
+    auto ew = einsum<double>("ij,ij->ij", M1, M2);
+    std::cout << "  " << ew << std::endl;
 
-        // === 测试 hadamard ===
-        auto hadamard_res = hadamard(M1, M1); // 元素平方
-        print_tensor("hadamard(M1, M1)", hadamard_res);
+    // 5. Contraction: ijk,ikl->ijl
+    std::cout << "\n5. 3D contraction (ijk,ikl->ijl):" << std::endl;
+    Tensor<int> T1({2, 3, 4});
+    Tensor<int> T2({2, 4, 5});
+    int v = 1;
+    for (size_t i = 0; i < 2; ++i)
+        for (size_t j = 0; j < 3; ++j)
+            for (size_t k = 0; k < 4; ++k)
+                T1[{i, j, k}] = v++;
+    v = 10;
+    for (size_t i = 0; i < 2; ++i)
+        for (size_t k = 0; k < 4; ++k)
+            for (size_t l = 0; l < 5; ++l)
+                T2[{i, k, l}] = v++;
+    auto T3 = einsum<int>("ijk,ikl->ijl", T1, T2);
+    std::cout << "  output shape: {";
+    for (auto s : T3.tensor.shape()) std::cout << s << " ";
+    std::cout << "}" << std::endl;
 
-        // === 测试 bilinear ===
-        double bilin = bilinear(v1, Sq, v2);
-        print_scalar("bilinear(v1, Sq, v2)", bilin);
+    // 6. Trace: ii->
+    std::cout << "\n6. Trace (ii->):" << std::endl;
+    Tensor<int> square({3, 3}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    auto tr = einsum<int>("ii->", square);
+    std::cout << "  " << tr << "  (expected " << (1+5+9) << ")" << std::endl;
 
-        // === 测试 gram ===
-        auto gram_res = gram(M1);
-        print_tensor("gram(M1)", gram_res);
+    // 7. Batched matmul: bij,bjk->bik
+    std::cout << "\n7. Batched matmul (bij,bjk->bik):" << std::endl;
+    Tensor<int> bat1({2, 2, 3});
+    Tensor<int> bat2({2, 3, 2});
+    v = 1;
+    for (size_t b = 0; b < 2; ++b)
+        for (size_t i = 0; i < 2; ++i)
+            for (size_t j = 0; j < 3; ++j)
+                bat1[{b, i, j}] = v++;
+    v = 100;
+    for (size_t b = 0; b < 2; ++b)
+        for (size_t j = 0; j < 3; ++j)
+            for (size_t k = 0; k < 2; ++k)
+                bat2[{b, j, k}] = v++;
+    auto batch = einsum<int>("bij,bjk->bik", bat1, bat2);
+    std::cout << "  output shape: {";
+    for (auto s : batch.tensor.shape()) std::cout << s << " ";
+    std::cout << "}" << std::endl;
 
-        // === 测试 contract (对第1维缩并) ===
-        auto contract_res = contract(M1, {1}); // 对列求和 -> shape [2]
-        print_tensor("contract(M1, {1})", contract_res);
+    // 8. Ellipsis: sum all ...->
+    std::cout << "\n8. Sum all with ellipsis (...->):" << std::endl;
+    Tensor<int> t3d({2, 2, 3}, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+    auto sa = einsum<int>("...->", t3d);
+    std::cout << "  " << sa << "  (expected " << 78 << ")" << std::endl;
 
-        // === 测试 trace ===
-        double tr = trace(Sq);
-        print_scalar("trace(Sq)", tr);
+    // 9. Broadcast with ellipsis: ij,j->ij
+    std::cout << "\n9. Broadcast multiply (ij,j->ij):" << std::endl;
+    Tensor<int> mat({3, 4}, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+    Tensor<int> vec({4}, {2, 3, 4, 5});
+    auto br = einsum<int>("ij,j->ij", mat, vec);
+    std::cout << "  " << br << std::endl;
 
-        // === 测试 sum (全部) ===
-        double total_sum = sum(M1);
-        print_scalar("sum(M1)", total_sum);
-
-        // === 测试 sum(axis=0) ===
-        auto sum_axis0 = sum(M1, 0); // shape [3]
-        print_tensor("sum(M1, axis=0)", sum_axis0);
-
-        // === 测试 transpose ===
-        auto trans = transpose(M1); // 默认反转 -> [3,2]
-        print_tensor("transpose(M1)", trans);
-
-        auto trans_custom = transpose(M1, {1, 0}); // 显式转置
-        print_tensor("transpose(M1, {1,0})", trans_custom);
-
-        // === 测试 diag ===
-        auto diag_vec = diag(Sq);
-        print_tensor("diag(Sq)", diag_vec);
-
-        // === 测试 diag_matrix ===
-        auto diag_mat = diag_matrix(diag_vec.tensor);
-        print_tensor("diag_matrix(diag(Sq))", diag_mat);
-
-        // === 数学函数 ===
-        using namespace math;
-
-        auto exp_res = exp(v1);
-        print_tensor("exp(v1)", exp_res);
-
-        auto log_res = log(exp_res.tensor);
-        print_tensor("log(exp(v1))", log_res);
-
-        auto sqrt_res = sqrt(v1);
-        print_tensor("sqrt(v1)", sqrt_res);
-
-        auto sin_res = sin(v1);
-        print_tensor("sin(v1)", sin_res);
-
-        auto cos_res = cos(v1);
-        print_tensor("cos(v1)", cos_res);
-
-        double mean_val = mean(v1);
-        print_scalar("mean(v1)", mean_val);
-
-        double var_val = var(v1);
-        print_scalar("var(v1)", var_val);
-
-        double stddev_val = stddev(v1);
-        print_scalar("stddev(v1)", stddev_val);
-
-        double norm_val = norm(v1);
-        print_scalar("norm(v1)", norm_val);
-
-        double frob_val = frobenius_norm(M1);
-        print_scalar("frobenius_norm(M1)", frob_val);
-
-        std::cout << "✅ 所有操作测试通过！\n";
-    }
-    catch (const std::exception &e)
-    {
-        std::cerr << "❌ 错误: " << e.what() << "\n";
-        return 1;
-    }
+    // 10. Complex contraction: ijk,ijl->kl
+    std::cout << "\n10. Complex contraction (ijk,ijl->kl):" << std::endl;
+    Tensor<int> X({2, 3, 4});
+    Tensor<int> Y({2, 3, 5});
+    for (size_t i = 0; i < 2; ++i)
+        for (size_t j = 0; j < 3; ++j) {
+            for (size_t k = 0; k < 4; ++k)
+                X[{i, j, k}] = i*100 + j*10 + k;
+            for (size_t l = 0; l < 5; ++l)
+                Y[{i, j, l}] = i*200 + j*20 + l;
+        }
+    auto Z = einsum<int>("ijk,ijl->kl", X, Y);
+    std::cout << "  output shape: {";
+    for (auto s : Z.tensor.shape()) std::cout << s << " ";
+    std::cout << "}" << std::endl;
 
     return 0;
 }

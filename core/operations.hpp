@@ -393,7 +393,7 @@ namespace TensorN
     // ================================================================
 
     template <typename T>
-    Tensor<T> softmax(const Tensor<T>& A, int axis = -1)
+    opt<T> softmax(const Tensor<T>& A, int axis = -1)
     {
         size_t ndim = A.shape().size();
         if (axis < 0) axis = static_cast<int>(ndim) + axis;
@@ -411,7 +411,7 @@ namespace TensorN
             }
             for (size_t i = 0; i < A.size(); ++i)
                 result[i] /= sum;
-            return result;
+            return opt<T>(result);
         }
 
         if (ndim == 2) {
@@ -429,7 +429,7 @@ namespace TensorN
                     for (size_t c = 0; c < cols; ++c)
                         result[{r, c}] /= sum;
                 }
-                return result;
+                return opt<T>(result);
             }
             if (axis == 0) {
                 for (size_t c = 0; c < cols; ++c) {
@@ -444,7 +444,7 @@ namespace TensorN
                     for (size_t r = 0; r < rows; ++r)
                         result[{r, c}] /= sum;
                 }
-                return result;
+                return opt<T>(result);
             }
         }
         TENSOR_THROW("Softmax: only 1D/2D supported");
@@ -455,7 +455,7 @@ namespace TensorN
     // ================================================================
 
     template <typename T>
-    Tensor<int64_t> argmax(const Tensor<T>& A, int axis = -1)
+    opt<int64_t> argmax(const Tensor<T>& A, int axis = -1)
     {
         const auto& shape = A.shape();
         size_t ndim = shape.size();
@@ -483,11 +483,11 @@ namespace TensorN
                 result[o * inner + i] = best_idx;
             }
         }
-        return result;
+        return opt<int64_t>(result);
     }
 
     template <typename T>
-    Tensor<int64_t> argmin(const Tensor<T>& A, int axis = -1)
+    opt<int64_t> argmin(const Tensor<T>& A, int axis = -1)
     {
         const auto& shape = A.shape();
         size_t ndim = shape.size();
@@ -515,7 +515,7 @@ namespace TensorN
                 result[o * inner + i] = best_idx;
             }
         }
-        return result;
+        return opt<int64_t>(result);
     }
 
     // ================================================================
@@ -523,25 +523,25 @@ namespace TensorN
     // ================================================================
 
     template <typename T>
-    Tensor<int> equal(const Tensor<T>& A, const Tensor<T>& B)
+    opt<int> equal(const Tensor<T>& A, const Tensor<T>& B)
     {
         if (!A.is_isomorphic(B))
             TENSOR_THROW("Tensors must have same shape for equal");
         Tensor<int> result(A.shape());
         for (size_t i = 0; i < A.size(); ++i)
             result[i] = (A[i] == B[i]) ? 1 : 0;
-        return result;
+        return opt<int>(result);
     }
 
     template <typename T>
-    Tensor<int> greater(const Tensor<T>& A, const Tensor<T>& B)
+    opt<int> greater(const Tensor<T>& A, const Tensor<T>& B)
     {
         if (!A.is_isomorphic(B))
             TENSOR_THROW("Tensors must have same shape for greater");
         Tensor<int> result(A.shape());
         for (size_t i = 0; i < A.size(); ++i)
             result[i] = (A[i] > B[i]) ? 1 : 0;
-        return result;
+        return opt<int>(result);
     }
 
     // ================================================================

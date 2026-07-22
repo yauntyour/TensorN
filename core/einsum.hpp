@@ -28,9 +28,8 @@ namespace TensorN
                    label[1] == '\x80';
         }
 
-        size_t compute_index(const std::vector<size_t> &indices,
-                             const std::vector<size_t> & /*shape*/,
-                             const std::vector<size_t> &strides)
+        inline size_t compute_index(const std::vector<size_t> &indices,
+                                    const std::vector<size_t> &strides)
         {
             if (indices.empty())
                 return 0;
@@ -42,7 +41,7 @@ namespace TensorN
             return idx;
         }
 
-        std::vector<size_t> compute_strides(const std::vector<size_t> &shape)
+        inline std::vector<size_t> compute_strides(const std::vector<size_t> &shape)
         {
             if (shape.empty())
                 return {};
@@ -54,7 +53,7 @@ namespace TensorN
             return strides;
         }
 
-        bool increment_index(std::vector<size_t> &indices,
+        inline bool increment_index(std::vector<size_t> &indices,
                              const std::vector<size_t> &limits)
         {
             for (int i = static_cast<int>(indices.size()) - 1; i >= 0; --i)
@@ -76,7 +75,7 @@ namespace TensorN
             bool has_arrow;
         };
 
-        EinsumExpr parse_expression(const std::string &exp)
+        inline EinsumExpr parse_expression(const std::string &exp)
         {
             EinsumExpr result;
             result.has_arrow = false;
@@ -540,7 +539,7 @@ namespace TensorN
             {
                 output_indices[j] = iter_indices[output_iter_indices[j]];
             }
-            size_t output_pos = compute_index(output_indices, output_shape, output_strides);
+            size_t output_pos = compute_index(output_indices, output_strides);
 
             // Compute product of all input values
             T product = T(1);
@@ -551,7 +550,7 @@ namespace TensorN
                 {
                     tensor_indices[j] = iter_indices[input_iter_indices[i][j]];
                 }
-                size_t tensor_pos = compute_index(tensor_indices, tensors[i]->shape(), input_strides[i]);
+                size_t tensor_pos = compute_index(tensor_indices, input_strides[i]);
                 product *= (*tensors[i])[tensor_pos];
             }
 

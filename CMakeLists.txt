@@ -36,9 +36,9 @@ if(TENSORN_ENABLE_CUDA)
         enable_language(CUDA)
         find_package(CUDAToolkit REQUIRED)
         
-        # Check CUDA version (require 13.3 or compatible)
-        if(CUDAToolkit_VERSION VERSION_LESS "13.3")
-            message(WARNING "CUDA ${CUDAToolkit_VERSION} found, but CUDA 13.3 is recommended")
+        # Check CUDA version (require 12.0 or compatible)
+        if(CUDAToolkit_VERSION VERSION_LESS "12.0")
+            message(WARNING "CUDA ${CUDAToolkit_VERSION} found, but CUDA 12.0+ is recommended")
         endif()
         
         # CUDA architecture settings
@@ -231,6 +231,7 @@ if(TENSORN_BUILD_EXAMPLES)
         example/exp3.cpp
         example/exp4.cpp
         example/exp5.cpp
+        example/exp6.cpp
     )
     
     foreach(EXAMPLE_SOURCE ${TENSORN_EXAMPLES})
