@@ -6,6 +6,26 @@ namespace TensorN
 {
     namespace cuda
     {
+        // Helper function to calculate optimal block size
+        inline size_t get_optimal_block_size(size_t n) {
+            if (n <= 0) return 256;
+            // For small tensors, use smaller block size
+            if (n < 1024) return std::min(n, size_t(256));
+            // For medium tensors, use 512
+            if (n < 1024 * 1024) return 512;
+            // For large tensors, use 1024 (max for most GPUs)
+            return 1024;
+        }
+
+        // Helper function to calculate grid size with limit check
+        inline size_t get_grid_size(size_t n, size_t block_size) {
+            if (n == 0 || block_size == 0) return 0;
+            size_t grid_size = (n + block_size - 1) / block_size;
+            // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
+            const size_t MAX_GRID_SIZE = 2147483647;
+            return std::min(grid_size, MAX_GRID_SIZE);
+        }
+
         template <typename T>
         __global__ void conv2d_kernel(const T* input, const T* weight, const T* bias, T* output,
                                      size_t batch, size_t in_channels, size_t out_channels,
@@ -131,8 +151,8 @@ namespace TensorN
                 TENSOR_THROW("Output tensor has wrong shape");
 
             size_t total = batch * out_channels * out_height * out_width;
-            size_t block_size = 256;
-            size_t grid_size = (total + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(total);
+            size_t grid_size = get_grid_size(total, block_size);
 
             size_t bias_size = bias.size();
 
@@ -209,8 +229,8 @@ namespace TensorN
                 TENSOR_THROW("Output tensor has wrong shape");
 
             size_t total = batch * out_channels * out_height * out_width;
-            size_t block_size = 256;
-            size_t grid_size = (total + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(total);
+            size_t grid_size = get_grid_size(total, block_size);
 
             conv_transpose2d_kernel<<<grid_size, block_size, 0, stream>>>(
                 input.device_ptr(), weight.device_ptr(), output.device_ptr(),

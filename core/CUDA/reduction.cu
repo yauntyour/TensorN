@@ -8,6 +8,26 @@ namespace TensorN
 {
     namespace cuda
     {
+        // Helper function to calculate optimal block size
+        inline size_t get_optimal_block_size(size_t n) {
+            if (n <= 0) return 256;
+            // For small tensors, use smaller block size
+            if (n < 1024) return std::min(n, size_t(256));
+            // For medium tensors, use 512
+            if (n < 1024 * 1024) return 512;
+            // For large tensors, use 1024 (max for most GPUs)
+            return 1024;
+        }
+
+        // Helper function to calculate grid size with limit check
+        inline size_t get_grid_size(size_t n, size_t block_size) {
+            if (n == 0 || block_size == 0) return 0;
+            size_t grid_size = (n + block_size - 1) / block_size;
+            // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
+            const size_t MAX_GRID_SIZE = 2147483647;
+            return std::min(grid_size, MAX_GRID_SIZE);
+        }
+
         template <typename T, typename Op>
         __device__ inline T device_op(T a, T b, Op) { return Op{}(a, b); }
 
@@ -108,8 +128,9 @@ namespace TensorN
             size_t n = A.size();
             if (n == 0) return T(0);
 
-            size_t block_size = 256;
+            size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            grid_size = std::min(grid_size, size_t(2147483647));
 
             T* d_intermediate;
             cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
@@ -133,8 +154,9 @@ namespace TensorN
             size_t n = A.size();
             if (n == 0) return std::numeric_limits<T>::lowest();
 
-            size_t block_size = 256;
+            size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            grid_size = std::min(grid_size, size_t(2147483647));
 
             T* d_intermediate;
             cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
@@ -159,8 +181,9 @@ namespace TensorN
             size_t n = A.size();
             if (n == 0) return std::numeric_limits<T>::max();
 
-            size_t block_size = 256;
+            size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            grid_size = std::min(grid_size, size_t(2147483647));
 
             T* d_intermediate;
             cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
@@ -271,8 +294,8 @@ namespace TensorN
             CudaTensor<T> C(out_shape);
 
             size_t total = outer * inner;
-            size_t block_size = 256;
-            size_t grid_size = (total + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(total);
+            size_t grid_size = get_grid_size(total, block_size);
 
             kernel<<<grid_size, block_size>>>(A.device_ptr(), C.device_ptr(), outer, inner, reduce_dim);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -301,8 +324,8 @@ namespace TensorN
             T factor = T(1) / static_cast<T>(A.shape()[axis]);
 
             size_t n = C.size();
-            size_t block_size = 256;
-            size_t grid_size = (n + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(n);
+            size_t grid_size = get_grid_size(n, block_size);
             scale_kernel<<<grid_size, block_size>>>(C.device_ptr(), factor, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
@@ -383,8 +406,8 @@ namespace TensorN
             CudaTensor<int64_t> C(out_shape);
 
             size_t total = outer * inner;
-            size_t block_size = 256;
-            size_t grid_size = (total + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(total);
+            size_t grid_size = get_grid_size(total, block_size);
 
             argmax_kernel<<<grid_size, block_size>>>(A.device_ptr(), C.device_ptr(), outer, inner, reduce_dim);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -412,8 +435,8 @@ namespace TensorN
             CudaTensor<int64_t> C(out_shape);
 
             size_t total = outer * inner;
-            size_t block_size = 256;
-            size_t grid_size = (total + block_size - 1) / block_size;
+            size_t block_size = get_optimal_block_size(total);
+            size_t grid_size = get_grid_size(total, block_size);
 
             argmin_kernel<<<grid_size, block_size>>>(A.device_ptr(), C.device_ptr(), outer, inner, reduce_dim);
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -461,13 +484,15 @@ namespace TensorN
             if (n == 0) return T(0);
             CudaTensor<T> sq({n});
             {
-                size_t bs = 256, gs = (n + bs - 1) / bs;
+                size_t bs = get_optimal_block_size(n);
+                size_t gs = get_grid_size(n, bs);
                 mul_kernel<<<gs, bs>>>(A.device_ptr(), A.device_ptr(), sq.device_ptr(), n);
                 CHECK_CUDA_ERROR(cudaGetLastError());
             }
 
-            size_t block_size = 256;
+            size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            grid_size = std::min(grid_size, size_t(2147483647));
             T* d_sum;
             cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
             reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);
@@ -492,18 +517,21 @@ namespace TensorN
             CudaTensor<T> diff({n}), sq({n});
 
             {
-                size_t bs = 256, gs = (n + bs - 1) / bs;
+                size_t bs = get_optimal_block_size(n);
+                size_t gs = get_grid_size(n, bs);
                 sub_scalar_kernel<<<gs, bs>>>(A.device_ptr(), m, diff.device_ptr(), n);
                 CHECK_CUDA_ERROR(cudaGetLastError());
             }
             {
-                size_t bs = 256, gs = (n + bs - 1) / bs;
+                size_t bs = get_optimal_block_size(n);
+                size_t gs = get_grid_size(n, bs);
                 mul_kernel<<<gs, bs>>>(diff.device_ptr(), diff.device_ptr(), sq.device_ptr(), n);
                 CHECK_CUDA_ERROR(cudaGetLastError());
             }
 
-            size_t block_size = 256;
+            size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
+            grid_size = std::min(grid_size, size_t(2147483647));
             T* d_sum;
             cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
             reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);

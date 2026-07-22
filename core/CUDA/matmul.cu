@@ -7,6 +7,26 @@ namespace TensorN
 {
     namespace cuda
     {
+        // Helper function to calculate optimal block size
+        inline size_t get_optimal_block_size(size_t n) {
+            if (n <= 0) return 256;
+            // For small tensors, use smaller block size
+            if (n < 1024) return std::min(n, size_t(256));
+            // For medium tensors, use 512
+            if (n < 1024 * 1024) return 512;
+            // For large tensors, use 1024 (max for most GPUs)
+            return 1024;
+        }
+
+        // Helper function to calculate grid size with limit check
+        inline size_t get_grid_size(size_t n, size_t block_size) {
+            if (n == 0 || block_size == 0) return 0;
+            size_t grid_size = (n + block_size - 1) / block_size;
+            // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
+            const size_t MAX_GRID_SIZE = 2147483647;
+            return std::min(grid_size, MAX_GRID_SIZE);
+        }
+
         template <typename T>
         __global__ void matmul_kernel(const T* A, const T* B, T* C,
                                      size_t M, size_t N, size_t K)
@@ -371,7 +391,9 @@ namespace TensorN
         {
             if (x.size() != y.size())
                 TENSOR_THROW("axpy: size mismatch");
-            size_t n = x.size(), bs = 256, gs = (n + bs - 1) / bs;
+            size_t n = x.size();
+            size_t bs = get_optimal_block_size(n);
+            size_t gs = get_grid_size(n, bs);
             axpy_kernel<<<gs, bs, 0, stream>>>(x.device_ptr(), y.device_ptr(), alpha, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
         }
@@ -407,7 +429,8 @@ namespace TensorN
                 TENSOR_THROW("trace requires a square matrix");
             size_t n = A.shape()[0];
             if (n == 0) return T(0);
-            size_t bs = 256, gs = (n + bs - 1) / bs;
+            size_t bs = get_optimal_block_size(n);
+            size_t gs = get_grid_size(n, bs);
             T* d_partial;
             cudaMalloc(reinterpret_cast<void**>(&d_partial), gs * sizeof(T));
             trace_sum_kernel<<<gs, bs, bs * sizeof(T)>>>(A.device_ptr(), d_partial, n, A.shape()[1]);
@@ -443,7 +466,8 @@ namespace TensorN
             if (A.shape().size() != 2 || A.shape()[0] != A.shape()[1])
                 TENSOR_THROW("diag requires a square matrix");
             size_t n = A.shape()[0];
-            size_t bs = 256, gs = (n + bs - 1) / bs;
+            size_t bs = get_optimal_block_size(n);
+            size_t gs = get_grid_size(n, bs);
             diag_kernel<<<gs, bs, 0, stream>>>(A.device_ptr(), C.device_ptr(), n, A.shape()[1]);
             CHECK_CUDA_ERROR(cudaGetLastError());
         }
@@ -460,7 +484,9 @@ namespace TensorN
             if (v.shape().size() != 1)
                 TENSOR_THROW("diag_matrix requires a 1D tensor");
             size_t n = v.shape()[0];
-            size_t total = n * n, bs = 256, gs = (total + bs - 1) / bs;
+            size_t total = n * n;
+            size_t bs = get_optimal_block_size(total);
+            size_t gs = get_grid_size(total, bs);
             diag_matrix_kernel<<<gs, bs, 0, stream>>>(v.device_ptr(), C.device_ptr(), n, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
         }

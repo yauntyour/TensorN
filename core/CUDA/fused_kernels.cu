@@ -6,6 +6,26 @@
 
 namespace TensorN { namespace cuda {
 
+// Helper function to calculate optimal block size
+inline size_t get_optimal_block_size(size_t n) {
+    if (n <= 0) return 256;
+    // For small tensors, use smaller block size
+    if (n < 1024) return std::min(n, size_t(256));
+    // For medium tensors, use 512
+    if (n < 1024 * 1024) return 512;
+    // For large tensors, use 1024 (max for most GPUs)
+    return 1024;
+}
+
+// Helper function to calculate grid size with limit check
+inline size_t get_grid_size(size_t n, size_t block_size) {
+    if (n == 0 || block_size == 0) return 0;
+    size_t grid_size = (n + block_size - 1) / block_size;
+    // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
+    const size_t MAX_GRID_SIZE = 2147483647;
+    return std::min(grid_size, MAX_GRID_SIZE);
+}
+
 template <typename T>
 __device__ __forceinline__ T apply_activation(T x, ActivationType act, T alpha)
 {
@@ -151,7 +171,8 @@ void matmul_activation(const CudaTensor<T>& A, const CudaTensor<T>& B,
     if (act != ActivationType::None)
     {
         size_t n = M * N;
-        size_t bs = 256, gs = (n + bs - 1) / bs;
+        size_t bs = get_optimal_block_size(n);
+        size_t gs = get_grid_size(n, bs);
         fused_activation_kernel<<<gs, bs, 0, stream>>>(C.device_ptr(), n, act, alpha_param);
     }
 }
@@ -170,7 +191,8 @@ void conv2d_activation(const CudaTensor<T>& input, const CudaTensor<T>& weight,
     size_t out_width = (width + 2 * padding - kernel_w) / stride + 1;
 
     size_t total = batch * out_channels * out_height * out_width;
-    size_t bs = 256, gs = (total + bs - 1) / bs;
+    size_t bs = get_optimal_block_size(total);
+    size_t gs = get_grid_size(total, bs);
     size_t bias_size = bias.size();
 
     fused_conv2d_activation_kernel<<<gs, bs, 0, stream>>>(
@@ -187,7 +209,8 @@ void add_relu(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C,
               cudaStream_t stream)
 {
     size_t n = A.size();
-    size_t bs = 256, gs = (n + bs - 1) / bs;
+    size_t bs = get_optimal_block_size(n);
+    size_t gs = get_grid_size(n, bs);
     fused_add_relu_kernel<<<gs, bs, 0, stream>>>(A.device_ptr(), B.device_ptr(), C.device_ptr(), n);
 }
 
@@ -196,7 +219,8 @@ void mul_add(const CudaTensor<T>& A, const CudaTensor<T>& B, const CudaTensor<T>
              CudaTensor<T>& D, cudaStream_t stream)
 {
     size_t n = A.size();
-    size_t bs = 256, gs = (n + bs - 1) / bs;
+    size_t bs = get_optimal_block_size(n);
+    size_t gs = get_grid_size(n, bs);
     fused_mul_add_kernel<<<gs, bs, 0, stream>>>(A.device_ptr(), B.device_ptr(), C.device_ptr(), D.device_ptr(), n);
 }
 
@@ -208,7 +232,8 @@ void batchnorm_inference(const CudaTensor<T>& input, const CudaTensor<T>& mean,
 {
     size_t total = input.size();
     size_t spatial = total / channels;
-    size_t bs = 256, gs = (total + bs - 1) / bs;
+    size_t bs = get_optimal_block_size(total);
+    size_t gs = get_grid_size(total, bs);
     fused_batchnorm_inference_kernel<<<gs, bs, 0, stream>>>(
         input.device_ptr(), mean.device_ptr(), var.device_ptr(),
         gamma.device_ptr(), beta.device_ptr(), output.device_ptr(),
@@ -244,7 +269,8 @@ void residual_block(const CudaTensor<T>& input, const CudaTensor<T>& weight1,
     if (input.shape() == temp2.shape())
     {
         size_t n = temp2.size();
-        size_t bs = 256, gs = (n + bs - 1) / bs;
+        size_t bs = get_optimal_block_size(n);
+        size_t gs = get_grid_size(n, bs);
         fused_add_relu_kernel<<<gs, bs, 0, stream>>>(
             temp2.device_ptr(), input.device_ptr(), output.device_ptr(), n);
     }
