@@ -199,6 +199,38 @@ namespace TensorN
         return einsum<T>(expr, A);
     }
 
+    // 累加和 (Cumulative sum)
+    template <typename T>
+    opt<T> cumsum(const Tensor<T> &A, size_t axis)
+    {
+        if (axis >= A.shape().size())
+            TENSOR_THROW("cumsum axis out of range");
+
+        const auto &shape = A.shape();
+        Tensor<T> result(shape);
+
+        size_t outer = 1, dim = shape[axis], inner = 1;
+        for (size_t d = 0; d < axis; ++d)
+            outer *= shape[d];
+        for (size_t d = axis + 1; d < shape.size(); ++d)
+            inner *= shape[d];
+
+        for (size_t o = 0; o < outer; ++o)
+        {
+            for (size_t i = 0; i < inner; ++i)
+            {
+                T accum = T(0);
+                for (size_t r = 0; r < dim; ++r)
+                {
+                    accum += A[o * dim * inner + r * inner + i];
+                    result[o * dim * inner + r * inner + i] = accum;
+                }
+            }
+        }
+
+        return opt<T>(result);
+    }
+
     // 转置 (Transpose)
     template <typename T>
     opt<T> transpose(const Tensor<T> &A, const std::vector<size_t> &axes = {})
@@ -636,6 +668,114 @@ namespace TensorN
         return output;
     }
 
+    // ================================================================
+    // Linear Kernel Attention (non-causal)
+    // phi: (..., L, D)   psi: (..., L, D)   V: (..., L, d_v)
+    // Returns: (..., L, d_v)
+    // ================================================================
+
+    template <typename T>
+    opt<T> linear_kernels_attn(const Tensor<T> &phi, const Tensor<T> &psi, const Tensor<T> &V)
+    {
+        size_t ndim = phi.shape().size();
+        if (ndim < 2)
+            TENSOR_THROW("linear_kernels_attn: tensors must have at least 2 dimensions");
+        if (!phi.is_isomorphic(psi))
+            TENSOR_THROW("linear_kernels_attn: phi and psi must have same shape");
+
+        const auto &pshape = phi.shape();
+        const auto &vshape = V.shape();
+        if (pshape.size() != vshape.size())
+            TENSOR_THROW("linear_kernels_attn: phi and V must have same number of dimensions");
+        for (size_t i = 0; i < pshape.size() - 1; ++i)
+            if (pshape[i] != vshape[i])
+                TENSOR_THROW("linear_kernels_attn: phi and V shape mismatch in batch+L dimensions");
+
+        size_t time_axis = ndim - 2;
+        size_t L = pshape[time_axis];
+        size_t d_v = vshape[ndim - 1];
+
+        auto C = sum(psi, time_axis).tensor;
+        auto outer_psi_V = einsum<T>("...ld,...lv->...ldv", psi, V).tensor;
+        auto S = sum(outer_psi_V, time_axis).tensor;
+        auto numerator = einsum<T>("...ld,...dv->...lv", phi, S).tensor;
+        auto denominator = einsum<T>("...ld,...d->...l", phi, C).tensor;
+
+        Tensor<T> result = numerator;
+
+        size_t batch_size = 1;
+        for (size_t i = 0; i < time_axis; ++i)
+            batch_size *= pshape[i];
+
+        for (size_t b = 0; b < batch_size; ++b)
+        {
+            for (size_t l = 0; l < L; ++l)
+            {
+                T denom = denominator[b * L + l];
+                if (denom < T(1e-8))
+                    denom = T(1e-8);
+                for (size_t v = 0; v < d_v; ++v)
+                    result[b * L * d_v + l * d_v + v] /= denom;
+            }
+        }
+
+        return opt<T>(result);
+    }
+
+    // ================================================================
+    // Linear Kernel Attention (causal)
+    // phi: (..., L, D)   psi: (..., L, D)   V: (..., L, d_v)
+    // Returns: (..., L, d_v)
+    // ================================================================
+
+    template <typename T>
+    opt<T> linear_kernels_attn_causal(const Tensor<T> &phi, const Tensor<T> &psi, const Tensor<T> &V)
+    {
+        size_t ndim = phi.shape().size();
+        if (ndim < 2)
+            TENSOR_THROW("linear_kernels_attn_causal: tensors must have at least 2 dimensions");
+        if (!phi.is_isomorphic(psi))
+            TENSOR_THROW("linear_kernels_attn_causal: phi and psi must have same shape");
+
+        const auto &pshape = phi.shape();
+        const auto &vshape = V.shape();
+        if (pshape.size() != vshape.size())
+            TENSOR_THROW("linear_kernels_attn_causal: phi and V must have same number of dimensions");
+        for (size_t i = 0; i < pshape.size() - 1; ++i)
+            if (pshape[i] != vshape[i])
+                TENSOR_THROW("linear_kernels_attn_causal: phi and V shape mismatch in batch+L dimensions");
+
+        size_t time_axis = ndim - 2;
+        size_t L = pshape[time_axis];
+        size_t d_v = vshape[ndim - 1];
+
+        auto C = cumsum(psi, time_axis).tensor;
+        auto outer_psi_V = einsum<T>("...ld,...lv->...ldv", psi, V).tensor;
+        auto S = cumsum(outer_psi_V, time_axis).tensor;
+        auto numerator = einsum<T>("...ld,...ldv->...lv", phi, S).tensor;
+        auto denominator = sum(hadamard(phi, C).tensor, ndim - 1).tensor;
+
+        Tensor<T> result = numerator;
+
+        size_t batch_size = 1;
+        for (size_t i = 0; i < time_axis; ++i)
+            batch_size *= pshape[i];
+
+        for (size_t b = 0; b < batch_size; ++b)
+        {
+            for (size_t l = 0; l < L; ++l)
+            {
+                T denom = denominator[b * L + l];
+                if (denom < T(1e-8))
+                    denom = T(1e-8);
+                for (size_t v = 0; v < d_v; ++v)
+                    result[b * L * d_v + l * d_v + v] /= denom;
+            }
+        }
+
+        return opt<T>(result);
+    }
+
 }
 
-#endif // !__OPERATIONS__H__
+#endif // !__OPERATIONS_H__

@@ -385,6 +385,38 @@ namespace TensorN
         }
 
         template <typename T>
+        Tensor<T> cumsum(const Tensor<T>& A, size_t axis)
+        {
+            const auto& shape = A.shape();
+            if (axis >= shape.size())
+                TENSOR_THROW("cumsum axis out of range");
+
+            Tensor<T> result(shape);
+
+            size_t outer = 1, dim = shape[axis], inner = 1;
+            for (size_t d = 0; d < axis; ++d) outer *= shape[d];
+            for (size_t d = axis + 1; d < shape.size(); ++d) inner *= shape[d];
+
+            const T* __restrict src = A.data->data();
+            T* __restrict dst = result.data->data();
+
+            #pragma omp parallel for schedule(static)
+            for (int64_t oi = 0; oi < static_cast<int64_t>(outer * inner); ++oi)
+            {
+                size_t o = static_cast<size_t>(oi) / inner;
+                size_t i = static_cast<size_t>(oi) % inner;
+                T accum = T(0);
+                for (size_t r = 0; r < dim; ++r)
+                {
+                    accum += src[o * dim * inner + r * inner + i];
+                    dst[o * dim * inner + r * inner + i] = accum;
+                }
+            }
+
+            return result;
+        }
+
+        template <typename T>
         T mean(const Tensor<T>& A) { return blas::sum(A) / static_cast<T>(A.size()); }
 
         template <typename T>
