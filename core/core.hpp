@@ -7,6 +7,7 @@
 #include "operations.hpp"
 #include "static.hpp"
 #include "BLAS/blas_tensor.hpp"
+#include "GGUF/gguf.hpp"
 
 #ifdef TENSORN_CUDA_AVAILABLE
 #include "CUDA/cuda_tensor.hpp"
