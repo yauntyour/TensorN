@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <type_traits>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "cnpy/cnpy.hpp"
 #include "GGUF/gguf.hpp"
@@ -48,6 +49,7 @@ enum class PTDtype : uint8_t {
 
 constexpr const char PT_MAGIC[] = "TENSORPT!";
 constexpr uint32_t PT_VERSION = 1;
+constexpr uint32_t PT_VERSION_MULTI = 2;
 
 template <typename T>
 PTDtype get_pt_dtype()
@@ -257,6 +259,234 @@ namespace TensorN
     }
 
     template <typename T>
+    void save_pt_multi(
+        const std::vector<std::pair<std::string, Tensor<T>>> &tensors,
+        const std::string &filename)
+    {
+        if (!is_supported_pt_type<T>())
+        {
+            TENSOR_THROW("Type not supported for .pt format");
+        }
+        if (tensors.empty())
+        {
+            TENSOR_THROW("No tensors to save");
+        }
+
+        std::ofstream file(filename, std::ios::binary);
+        if (!file)
+            TENSOR_THROW("Cannot open file for writing: " + filename);
+
+        auto dtype = get_pt_dtype<T>();
+
+        file.write(PT_MAGIC, 9);
+
+        uint32_t version = PT_VERSION_MULTI;
+        file.write(reinterpret_cast<const char *>(&version), sizeof(version));
+
+        uint64_t tensor_count = static_cast<uint64_t>(tensors.size());
+        file.write(reinterpret_cast<const char *>(&tensor_count), sizeof(tensor_count));
+
+        uint64_t current_data_offset = 0;
+        for (size_t i = 0; i < tensors.size(); ++i)
+        {
+            const auto &[name, tensor] = tensors[i];
+
+            uint32_t name_len = static_cast<uint32_t>(name.size());
+            file.write(reinterpret_cast<const char *>(&name_len), sizeof(name_len));
+            file.write(name.data(), name_len);
+
+            uint8_t dtype_byte = static_cast<uint8_t>(dtype);
+            file.write(reinterpret_cast<const char *>(&dtype_byte), sizeof(dtype_byte));
+
+            const auto &shape = tensor.shape();
+            uint32_t ndims = static_cast<uint32_t>(shape.size());
+            file.write(reinterpret_cast<const char *>(&ndims), sizeof(ndims));
+
+            for (auto dim : shape)
+            {
+                uint64_t dim64 = static_cast<uint64_t>(dim);
+                file.write(reinterpret_cast<const char *>(&dim64), sizeof(dim64));
+            }
+
+            file.write(reinterpret_cast<const char *>(&current_data_offset), sizeof(uint64_t));
+
+            size_t raw_size = tensor.data->size() * sizeof(T);
+            file.write(reinterpret_cast<const char *>(&raw_size), sizeof(uint64_t));
+
+            current_data_offset += raw_size;
+        }
+
+        for (size_t i = 0; i < tensors.size(); ++i)
+        {
+            const auto &[name, tensor] = tensors[i];
+            file.write(reinterpret_cast<const char *>(tensor.data->data()),
+                       static_cast<std::streamsize>(tensor.data->size() * sizeof(T)));
+        }
+
+        if (!file)
+            TENSOR_THROW("Error writing .pt file: " + filename);
+    }
+
+    template <typename T>
+    std::unordered_map<std::string, Tensor<T>> load_pt_multi(const std::string &filename)
+    {
+        if (!is_supported_pt_type<T>())
+        {
+            TENSOR_THROW("Type not supported for .pt format");
+        }
+
+        std::ifstream file(filename, std::ios::binary);
+        if (!file)
+            TENSOR_THROW("Cannot open file: " + filename);
+
+        char magic_buf[9];
+        file.read(magic_buf, 9);
+        if (std::memcmp(magic_buf, PT_MAGIC, 9) != 0)
+        {
+            TENSOR_THROW("Not a valid TensorN .pt file (bad magic)");
+        }
+
+        uint32_t version;
+        file.read(reinterpret_cast<char *>(&version), sizeof(version));
+        if (version != PT_VERSION_MULTI)
+        {
+            TENSOR_THROW("Not a multi-tensor .pt file (version=" + std::to_string(version) + ")");
+        }
+
+        uint64_t tensor_count;
+        file.read(reinterpret_cast<char *>(&tensor_count), sizeof(tensor_count));
+        if (tensor_count == 0)
+        {
+            TENSOR_THROW("No tensors found in .pt file");
+        }
+
+        struct TensorInfo
+        {
+            std::string name;
+            PTDtype dtype;
+            std::vector<size_t> shape;
+            uint64_t data_offset;
+            uint64_t data_size;
+        };
+
+        std::vector<TensorInfo> infos(tensor_count);
+        PTDtype expected_dtype = get_pt_dtype<T>();
+
+        for (uint64_t i = 0; i < tensor_count; ++i)
+        {
+            uint32_t name_len;
+            file.read(reinterpret_cast<char *>(&name_len), sizeof(name_len));
+            infos[i].name.resize(name_len);
+            file.read(&infos[i].name[0], name_len);
+
+            uint8_t dtype_byte;
+            file.read(reinterpret_cast<char *>(&dtype_byte), sizeof(dtype_byte));
+            infos[i].dtype = static_cast<PTDtype>(dtype_byte);
+
+            if (infos[i].dtype != expected_dtype)
+            {
+                TENSOR_THROW(
+                    "Type mismatch for tensor '" + infos[i].name +
+                    "' in .pt file");
+            }
+
+            uint32_t ndims;
+            file.read(reinterpret_cast<char *>(&ndims), sizeof(ndims));
+
+            infos[i].shape.resize(ndims);
+            for (uint32_t d = 0; d < ndims; ++d)
+            {
+                uint64_t dim;
+                file.read(reinterpret_cast<char *>(&dim), sizeof(dim));
+                infos[i].shape[d] = static_cast<size_t>(dim);
+            }
+
+            file.read(reinterpret_cast<char *>(&infos[i].data_offset), sizeof(uint64_t));
+            file.read(reinterpret_cast<char *>(&infos[i].data_size), sizeof(uint64_t));
+        }
+
+        uint64_t data_base = static_cast<uint64_t>(file.tellg());
+
+        std::unordered_map<std::string, Tensor<T>> result;
+
+        for (const auto &info : infos)
+        {
+            uint64_t abs_offset = data_base + info.data_offset;
+            file.seekg(static_cast<std::streamoff>(abs_offset));
+
+            size_t total_elements = info.shape.empty() ? 1 : 1;
+            for (auto dim : info.shape)
+                total_elements *= dim;
+
+            std::vector<T> data_vec(total_elements);
+            file.read(reinterpret_cast<char *>(data_vec.data()),
+                      static_cast<std::streamsize>(total_elements * sizeof(T)));
+
+            if (!file)
+                TENSOR_THROW("Error reading tensor data from .pt file");
+
+            result[info.name] = Tensor<T>(info.shape, data_vec);
+        }
+
+        return result;
+    }
+
+    inline std::vector<std::string> pt_list_tensors(const std::string &filename)
+    {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file)
+            TENSOR_THROW("Cannot open file: " + filename);
+
+        char magic_buf[9];
+        file.read(magic_buf, 9);
+        if (std::memcmp(magic_buf, PT_MAGIC, 9) != 0)
+        {
+            TENSOR_THROW("Not a valid TensorN .pt file (bad magic)");
+        }
+
+        uint32_t version;
+        file.read(reinterpret_cast<char *>(&version), sizeof(version));
+        if (version != PT_VERSION_MULTI)
+        {
+            if (version == PT_VERSION)
+            {
+                return {"tensor"};
+            }
+            TENSOR_THROW("Unsupported .pt version: " + std::to_string(version));
+        }
+
+        uint64_t tensor_count;
+        file.read(reinterpret_cast<char *>(&tensor_count), sizeof(tensor_count));
+
+        std::vector<std::string> names;
+        for (uint64_t i = 0; i < tensor_count; ++i)
+        {
+            uint32_t name_len;
+            file.read(reinterpret_cast<char *>(&name_len), sizeof(name_len));
+            std::string name(name_len, '\0');
+            file.read(&name[0], name_len);
+            names.push_back(name);
+
+            uint8_t dtype_byte;
+            file.read(reinterpret_cast<char *>(&dtype_byte), sizeof(dtype_byte));
+
+            uint32_t ndims;
+            file.read(reinterpret_cast<char *>(&ndims), sizeof(ndims));
+            for (uint32_t d = 0; d < ndims; ++d)
+            {
+                uint64_t dim;
+                file.read(reinterpret_cast<char *>(&dim), sizeof(dim));
+            }
+
+            uint64_t data_offset, data_size;
+            file.read(reinterpret_cast<char *>(&data_offset), sizeof(uint64_t));
+            file.read(reinterpret_cast<char *>(&data_size), sizeof(uint64_t));
+        }
+
+        return names;
+    }
+
+    template <typename T>
     Tensor<T> load_pt(const std::string &filename)
     {
         std::ifstream file(filename, std::ios::binary);
@@ -272,6 +502,16 @@ namespace TensorN
 
         uint32_t version;
         file.read(reinterpret_cast<char *>(&version), sizeof(version));
+
+        if (version == PT_VERSION_MULTI)
+        {
+            file.seekg(0);
+            auto tensors = load_pt_multi<T>(filename);
+            if (tensors.empty())
+                TENSOR_THROW("No tensors in multi-tensor .pt file");
+            return tensors.begin()->second;
+        }
+
         if (version != PT_VERSION)
         {
             TENSOR_THROW("Unsupported .pt version: " + std::to_string(version));
