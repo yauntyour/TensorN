@@ -933,6 +933,319 @@ namespace TensorN
         return result;
     }
 
+    template <typename T>
+    void save_gguf_multi(
+        const std::vector<std::pair<std::string, Tensor<T>>> &tensors,
+        const std::string &filename,
+        const std::unordered_map<std::string, GGUFMetadataValue> &metadata = {})
+    {
+        if (!is_supported_gguf_type<T>())
+        {
+            TENSOR_THROW("Type not supported for .gguf format");
+        }
+
+        if (tensors.empty())
+        {
+            TENSOR_THROW("No tensors to save");
+        }
+
+        std::ofstream file(filename, std::ios::binary);
+        if (!file)
+            TENSOR_THROW("Cannot open file for writing: " + filename);
+
+        GGMLType gguf_type = get_gguf_type<T>();
+        uint32_t alignment = GGUF_DEFAULT_ALIGNMENT;
+
+        auto it_align = metadata.find("general.alignment");
+        if (it_align != metadata.end())
+        {
+            if (std::holds_alternative<uint32_t>(it_align->second))
+                alignment = std::get<uint32_t>(it_align->second);
+        }
+
+        uint32_t magic = GGUF_MAGIC;
+        uint32_t version = GGUF_VERSION;
+        uint64_t tensor_count = static_cast<uint64_t>(tensors.size());
+        uint64_t metadata_kv_count = static_cast<uint64_t>(metadata.size());
+
+        file.write(reinterpret_cast<const char *>(&magic), sizeof(magic));
+        file.write(reinterpret_cast<const char *>(&version), sizeof(version));
+        file.write(reinterpret_cast<const char *>(&tensor_count), sizeof(tensor_count));
+        file.write(reinterpret_cast<const char *>(&metadata_kv_count), sizeof(metadata_kv_count));
+
+        for (const auto &[key, value] : metadata)
+        {
+            write_gguf_string(file, key);
+            GGUFMetadataValueType vtype = get_metadata_value_type(value);
+            uint32_t vtype_u32 = static_cast<uint32_t>(vtype);
+            file.write(reinterpret_cast<const char *>(&vtype_u32), sizeof(vtype_u32));
+            write_metadata_value(file, value);
+        }
+
+        std::vector<uint64_t> tensor_data_offsets(tensors.size());
+        uint64_t current_data_offset = 0;
+
+        for (size_t i = 0; i < tensors.size(); ++i)
+        {
+            const auto &[name, tensor] = tensors[i];
+            write_gguf_string(file, name);
+
+            const auto &shape = tensor.shape();
+            uint32_t n_dims = static_cast<uint32_t>(shape.size());
+            file.write(reinterpret_cast<const char *>(&n_dims), sizeof(n_dims));
+            for (auto dim : shape)
+            {
+                uint64_t dim64 = static_cast<uint64_t>(dim);
+                file.write(reinterpret_cast<const char *>(&dim64), sizeof(dim64));
+            }
+
+            uint32_t type_u32 = static_cast<uint32_t>(gguf_type);
+            file.write(reinterpret_cast<const char *>(&type_u32), sizeof(type_u32));
+
+            tensor_data_offsets[i] = current_data_offset;
+            file.write(reinterpret_cast<const char *>(&tensor_data_offsets[i]), sizeof(uint64_t));
+
+            size_t raw_size = tensor.data->size() * sizeof(T);
+            current_data_offset += raw_size;
+        }
+
+        uint64_t current_pos = static_cast<uint64_t>(file.tellp());
+        uint64_t aligned_pos = align_offset(current_pos, alignment);
+        uint64_t padding = aligned_pos - current_pos;
+        for (uint64_t i = 0; i < padding; ++i)
+        {
+            char zero = 0;
+            file.write(&zero, 1);
+        }
+
+        for (size_t i = 0; i < tensors.size(); ++i)
+        {
+            const auto &[name, tensor] = tensors[i];
+            const char *raw_ptr = reinterpret_cast<const char *>(tensor.data->data());
+            size_t raw_size = tensor.data->size() * sizeof(T);
+            file.write(raw_ptr, static_cast<std::streamsize>(raw_size));
+
+            uint64_t after_write = static_cast<uint64_t>(file.tellp());
+            uint64_t aligned_after = align_offset(after_write, alignment);
+            uint64_t pad = aligned_after - after_write;
+            for (uint64_t j = 0; j < pad; ++j)
+            {
+                char zero = 0;
+                file.write(&zero, 1);
+            }
+        }
+
+        if (!file)
+            TENSOR_THROW("Error writing GGUF file: " + filename);
+    }
+
+    template <typename T>
+    std::unordered_map<std::string, Tensor<T>> load_gguf_multi(
+        const std::string &filename)
+    {
+        if (!is_supported_gguf_type<T>())
+        {
+            TENSOR_THROW("Type not supported for .gguf format");
+        }
+
+        std::ifstream file(filename, std::ios::binary);
+        if (!file)
+            TENSOR_THROW("Cannot open file: " + filename);
+
+        uint32_t magic;
+        file.read(reinterpret_cast<char *>(&magic), sizeof(magic));
+        if (magic != GGUF_MAGIC)
+            TENSOR_THROW("Not a valid GGUF file (bad magic)");
+
+        uint32_t version;
+        file.read(reinterpret_cast<char *>(&version), sizeof(version));
+        if (version != GGUF_VERSION)
+            TENSOR_THROW("Unsupported GGUF version: " + std::to_string(version));
+
+        uint64_t tensor_count;
+        file.read(reinterpret_cast<char *>(&tensor_count), sizeof(tensor_count));
+
+        uint64_t metadata_kv_count;
+        file.read(reinterpret_cast<char *>(&metadata_kv_count), sizeof(metadata_kv_count));
+
+        for (uint64_t i = 0; i < metadata_kv_count; ++i)
+        {
+            read_gguf_string(file);
+            uint32_t vtype_u32;
+            file.read(reinterpret_cast<char *>(&vtype_u32), sizeof(vtype_u32));
+            GGUFMetadataValueType vtype = static_cast<GGUFMetadataValueType>(vtype_u32);
+
+            switch (vtype)
+            {
+            case GGUFMetadataValueType::UINT8:
+            case GGUFMetadataValueType::INT8:
+            {
+                int8_t v;
+                file.read(reinterpret_cast<char *>(&v), 1);
+                break;
+            }
+            case GGUFMetadataValueType::UINT16:
+            case GGUFMetadataValueType::INT16:
+            {
+                int16_t v;
+                file.read(reinterpret_cast<char *>(&v), 2);
+                break;
+            }
+            case GGUFMetadataValueType::UINT32:
+            case GGUFMetadataValueType::INT32:
+            case GGUFMetadataValueType::FLOAT32:
+            case GGUFMetadataValueType::BOOL:
+            {
+                int32_t v;
+                file.read(reinterpret_cast<char *>(&v), 4);
+                break;
+            }
+            case GGUFMetadataValueType::UINT64:
+            case GGUFMetadataValueType::INT64:
+            case GGUFMetadataValueType::FLOAT64:
+            {
+                int64_t v;
+                file.read(reinterpret_cast<char *>(&v), 8);
+                break;
+            }
+            case GGUFMetadataValueType::STRING:
+            {
+                read_gguf_string(file);
+                break;
+            }
+            case GGUFMetadataValueType::ARRAY:
+            {
+                uint32_t arr_type;
+                file.read(reinterpret_cast<char *>(&arr_type), sizeof(arr_type));
+                uint64_t arr_len;
+                file.read(reinterpret_cast<char *>(&arr_len), sizeof(arr_len));
+                for (uint64_t j = 0; j < arr_len; ++j)
+                {
+                    GGUFMetadataValueType elem_type = static_cast<GGUFMetadataValueType>(arr_type);
+                    switch (elem_type)
+                    {
+                    case GGUFMetadataValueType::UINT8:
+                    case GGUFMetadataValueType::INT8:
+                    {
+                        int8_t v;
+                        file.read(reinterpret_cast<char *>(&v), 1);
+                        break;
+                    }
+                    case GGUFMetadataValueType::UINT16:
+                    case GGUFMetadataValueType::INT16:
+                    {
+                        int16_t v;
+                        file.read(reinterpret_cast<char *>(&v), 2);
+                        break;
+                    }
+                    case GGUFMetadataValueType::UINT32:
+                    case GGUFMetadataValueType::INT32:
+                    case GGUFMetadataValueType::FLOAT32:
+                    case GGUFMetadataValueType::BOOL:
+                    {
+                        int32_t v;
+                        file.read(reinterpret_cast<char *>(&v), 4);
+                        break;
+                    }
+                    case GGUFMetadataValueType::UINT64:
+                    case GGUFMetadataValueType::INT64:
+                    case GGUFMetadataValueType::FLOAT64:
+                    {
+                        int64_t v;
+                        file.read(reinterpret_cast<char *>(&v), 8);
+                        break;
+                    }
+                    case GGUFMetadataValueType::STRING:
+                    {
+                        read_gguf_string(file);
+                        break;
+                    }
+                    case GGUFMetadataValueType::ARRAY:
+                        TENSOR_THROW("Nested arrays not supported in GGUF metadata reader");
+                    }
+                }
+                break;
+            }
+            }
+        }
+
+        struct TensorInfo
+        {
+            std::string name;
+            uint32_t n_dims;
+            std::vector<uint64_t> dims;
+            GGMLType type;
+            uint64_t offset;
+        };
+
+        std::vector<TensorInfo> tensor_infos(tensor_count);
+        for (uint64_t i = 0; i < tensor_count; ++i)
+        {
+            tensor_infos[i].name = read_gguf_string(file);
+            file.read(reinterpret_cast<char *>(&tensor_infos[i].n_dims), sizeof(uint32_t));
+            tensor_infos[i].dims.resize(tensor_infos[i].n_dims);
+            for (uint32_t d = 0; d < tensor_infos[i].n_dims; ++d)
+            {
+                file.read(reinterpret_cast<char *>(&tensor_infos[i].dims[d]), sizeof(uint64_t));
+            }
+            uint32_t type_u32;
+            file.read(reinterpret_cast<char *>(&type_u32), sizeof(uint32_t));
+            tensor_infos[i].type = static_cast<GGMLType>(type_u32);
+            file.read(reinterpret_cast<char *>(&tensor_infos[i].offset), sizeof(uint64_t));
+        }
+
+        if (tensor_count == 0)
+            TENSOR_THROW("No tensors found in GGUF file");
+
+        uint64_t tensor_data_base = static_cast<uint64_t>(file.tellg());
+        tensor_data_base = align_offset(tensor_data_base, GGUF_DEFAULT_ALIGNMENT);
+
+        GGMLType expected_type = get_gguf_type<T>();
+        std::unordered_map<std::string, Tensor<T>> result;
+
+        for (const auto &info : tensor_infos)
+        {
+            std::vector<size_t> shape(info.n_dims);
+            size_t total_elements = 1;
+            for (uint32_t d = 0; d < info.n_dims; ++d)
+            {
+                shape[d] = static_cast<size_t>(info.dims[d]);
+                total_elements *= shape[d];
+            }
+
+            if (info.type == expected_type ||
+                (info.type == GGMLType::F32 && expected_type == GGMLType::F32) ||
+                (info.type == GGMLType::F64 && expected_type == GGMLType::F64) ||
+                (info.type == GGMLType::I8 && expected_type == GGMLType::I8) ||
+                (info.type == GGMLType::I16 && expected_type == GGMLType::I16) ||
+                (info.type == GGMLType::I32 && expected_type == GGMLType::I32) ||
+                (info.type == GGMLType::I64 && expected_type == GGMLType::I64))
+            {
+                uint64_t abs_offset = tensor_data_base + info.offset;
+                file.seekg(static_cast<std::streamoff>(abs_offset));
+
+                std::vector<T> data_vec(total_elements);
+                file.read(reinterpret_cast<char *>(data_vec.data()),
+                          static_cast<std::streamsize>(total_elements * sizeof(T)));
+
+                if (!file)
+                    TENSOR_THROW("Error reading tensor data from GGUF file");
+
+                result[info.name] = Tensor<T>(shape, data_vec);
+            }
+            else
+            {
+                TENSOR_THROW(
+                    "Type mismatch for tensor '" + info.name +
+                    "'. Expected GGML type " +
+                    std::to_string(static_cast<uint32_t>(expected_type)) +
+                    ", got " + std::to_string(static_cast<uint32_t>(info.type)));
+            }
+        }
+
+        return result;
+    }
+
 } // namespace TensorN
 
 #endif // !__GGUF__H__
