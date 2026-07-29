@@ -5,6 +5,7 @@
 *.json
 *.pt
 *.pth
+*.gguf
 build
 cmake-build-*/
 CMakeFiles/

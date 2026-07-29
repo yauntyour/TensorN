@@ -9,6 +9,12 @@
 #include "BLAS/blas_tensor.hpp"
 #include "GGUF/gguf.hpp"
 
+#ifndef TENSORN_CUDA_AVAILABLE
+#if __has_include(<cuda_runtime.h>)
+#define TENSORN_CUDA_AVAILABLE
+#endif
+#endif
+
 #ifdef TENSORN_CUDA_AVAILABLE
 #include "CUDA/cuda_tensor.hpp"
 #include "CUDA/cuda_stream.hpp"
