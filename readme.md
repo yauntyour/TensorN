@@ -76,7 +76,7 @@ int main()
 
 ## 🛠 构建
 
-需要 **CMake 3.18+**、**C++17 编译器**。CUDA 和 OpenBLAS 为可选依赖。
+需要 **CMake 3.18+**、**C++17 以上编译器**。CUDA 和 OpenBLAS 为可选依赖。
 
 ```bash
 cmake -B build -DTENSORN_ENABLE_CUDA=ON -DTENSORN_ENABLE_OPENBLAS=ON
@@ -191,9 +191,9 @@ python tools/pt_converter.py pt2np data.pt data.npy
 
 ---
 
-## ⚡ 原地操作
+## ⚡ In-place操作
 
-对 Tensor 和 CudaTensor 均支持的零分配原地变换：
+对 Tensor 和 CudaTensor 均支持的零分配In-place变换：
 
 ```cpp
 Tensor<float> t({2, 3}, {1, 2, 3, 4, 5, 6});
