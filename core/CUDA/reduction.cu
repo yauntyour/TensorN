@@ -1,4 +1,5 @@
 #include "reduction.hpp"
+#include "cuda_stream.hpp"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <limits>
@@ -11,11 +12,8 @@ namespace TensorN
         // Helper function to calculate optimal block size
         inline size_t get_optimal_block_size(size_t n) {
             if (n <= 0) return 256;
-            // For small tensors, use smaller block size
             if (n < 1024) return std::min(n, size_t(256));
-            // For medium tensors, use 512
             if (n < 1024 * 1024) return 512;
-            // For large tensors, use 1024 (max for most GPUs)
             return 1024;
         }
 
@@ -23,7 +21,6 @@ namespace TensorN
         inline size_t get_grid_size(size_t n, size_t block_size) {
             if (n == 0 || block_size == 0) return 0;
             size_t grid_size = (n + block_size - 1) / block_size;
-            // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
             const size_t MAX_GRID_SIZE = 2147483647;
             return std::min(grid_size, MAX_GRID_SIZE);
         }
@@ -122,6 +119,60 @@ namespace TensorN
             if (tid == 0) output[blockIdx.x] = sdata[0];
         }
 
+        // Fused kernel: square elements + reduce sum in one pass (2x elements per thread)
+        template <typename T>
+        __global__ void reduce_kernel_square_sum(const T* input, T* output, size_t n)
+        {
+            extern __shared__ char shared_mem[];
+            T* sdata = reinterpret_cast<T*>(shared_mem);
+
+            size_t tid = threadIdx.x;
+            size_t i = blockIdx.x * blockDim.x * 2 + tid;
+
+            T val = T(0);
+            if (i < n) { T v = input[i]; val += v * v; }
+            if (i + blockDim.x < n) { T v = input[i + blockDim.x]; val += v * v; }
+
+            sdata[tid] = val;
+            __syncthreads();
+
+            for (size_t s = blockDim.x / 2; s > 0; s >>= 1)
+            {
+                if (tid < s)
+                    sdata[tid] += sdata[tid + s];
+                __syncthreads();
+            }
+
+            if (tid == 0) output[blockIdx.x] = sdata[0];
+        }
+
+        // Fused kernel: (input - mean)^2 + reduce sum (2x elements per thread)
+        template <typename T>
+        __global__ void reduce_kernel_sqdiff_sum(const T* input, T mean, T* output, size_t n)
+        {
+            extern __shared__ char shared_mem[];
+            T* sdata = reinterpret_cast<T*>(shared_mem);
+
+            size_t tid = threadIdx.x;
+            size_t i = blockIdx.x * blockDim.x * 2 + tid;
+
+            T val = T(0);
+            if (i < n) { T d = input[i] - mean; val += d * d; }
+            if (i + blockDim.x < n) { T d = input[i + blockDim.x] - mean; val += d * d; }
+
+            sdata[tid] = val;
+            __syncthreads();
+
+            for (size_t s = blockDim.x / 2; s > 0; s >>= 1)
+            {
+                if (tid < s)
+                    sdata[tid] += sdata[tid + s];
+                __syncthreads();
+            }
+
+            if (tid == 0) output[blockIdx.x] = sdata[0];
+        }
+
         template <typename T>
         T reduce_global_sum(const CudaTensor<T>& A)
         {
@@ -132,19 +183,19 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
             grid_size = std::min(grid_size, size_t(2147483647));
 
-            T* d_intermediate;
-            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
+            auto& pool = CudaMemoryPool::instance();
+            T* d_intermediate = static_cast<T*>(pool.acquire(grid_size * sizeof(T)));
 
             reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
-            std::vector<T> h_intermediate(grid_size);
-            cudaMemcpy(h_intermediate.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
+            std::vector<T> h(grid_size);
+            cudaMemcpy(h.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
 
             T result = T(0);
-            for (size_t i = 0; i < grid_size; ++i) result += h_intermediate[i];
+            for (size_t i = 0; i < grid_size; ++i) result += h[i];
 
-            cudaFree(d_intermediate);
+            pool.release(d_intermediate);
             return result;
         }
 
@@ -158,20 +209,19 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
             grid_size = std::min(grid_size, size_t(2147483647));
 
-            T* d_intermediate;
-            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
+            auto& pool = CudaMemoryPool::instance();
+            T* d_intermediate = static_cast<T*>(pool.acquire(grid_size * sizeof(T)));
 
             reduce_kernel_max<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
-            std::vector<T> h_intermediate(grid_size);
-            cudaMemcpy(h_intermediate.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
+            std::vector<T> h(grid_size);
+            cudaMemcpy(h.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
 
             T result = std::numeric_limits<T>::lowest();
-            for (size_t i = 0; i < grid_size; ++i)
-                if (h_intermediate[i] > result) result = h_intermediate[i];
+            for (size_t i = 0; i < grid_size; ++i) if (h[i] > result) result = h[i];
 
-            cudaFree(d_intermediate);
+            pool.release(d_intermediate);
             return result;
         }
 
@@ -185,20 +235,19 @@ namespace TensorN
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
             grid_size = std::min(grid_size, size_t(2147483647));
 
-            T* d_intermediate;
-            cudaMalloc(reinterpret_cast<void**>(&d_intermediate), grid_size * sizeof(T));
+            auto& pool = CudaMemoryPool::instance();
+            T* d_intermediate = static_cast<T*>(pool.acquire(grid_size * sizeof(T)));
 
             reduce_kernel_min<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
-            std::vector<T> h_intermediate(grid_size);
-            cudaMemcpy(h_intermediate.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
+            std::vector<T> h(grid_size);
+            cudaMemcpy(h.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
 
             T result = std::numeric_limits<T>::max();
-            for (size_t i = 0; i < grid_size; ++i)
-                if (h_intermediate[i] < result) result = h_intermediate[i];
+            for (size_t i = 0; i < grid_size; ++i) if (h[i] < result) result = h[i];
 
-            cudaFree(d_intermediate);
+            pool.release(d_intermediate);
             return result;
         }
 
@@ -476,74 +525,71 @@ namespace TensorN
             return frobenius_norm(A);
         }
 
-        // ---- frobenius_norm ----
+        // ---- frobenius_norm (fused: square + reduce in single kernel launch) ----
         template <typename T>
         T frobenius_norm(const CudaTensor<T>& A)
         {
             size_t n = A.size();
             if (n == 0) return T(0);
-            CudaTensor<T> sq({n});
-            {
-                size_t bs = get_optimal_block_size(n);
-                size_t gs = get_grid_size(n, bs);
-                mul_kernel<<<gs, bs>>>(A.device_ptr(), A.device_ptr(), sq.device_ptr(), n);
-                CHECK_CUDA_ERROR(cudaGetLastError());
-            }
 
             size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
             grid_size = std::min(grid_size, size_t(2147483647));
-            T* d_sum;
-            cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
-            reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);
+
+            auto& pool = CudaMemoryPool::instance();
+            T* d_intermediate = static_cast<T*>(pool.acquire(grid_size * sizeof(T)));
+
+            reduce_kernel_square_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(
+                A.device_ptr(), d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
             std::vector<T> h(grid_size);
-            cudaMemcpy(h.data(), d_sum, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
-            cudaFree(d_sum);
+            cudaMemcpy(h.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
 
             T sum_sq = T(0);
             for (size_t i = 0; i < grid_size; ++i) sum_sq += h[i];
+
+            pool.release(d_intermediate);
             return std::sqrt(sum_sq);
         }
 
-        // ---- var ----
+        // ---- var (fused: mean first, then single (x-mean)^2 + reduce kernel) ----
         template <typename T>
         T var(const CudaTensor<T>& A)
         {
-            T m = mean(A);
             size_t n = A.size();
             if (n == 0) return T(0);
-            CudaTensor<T> diff({n}), sq({n});
 
-            {
-                size_t bs = get_optimal_block_size(n);
-                size_t gs = get_grid_size(n, bs);
-                sub_scalar_kernel<<<gs, bs>>>(A.device_ptr(), m, diff.device_ptr(), n);
-                CHECK_CUDA_ERROR(cudaGetLastError());
-            }
-            {
-                size_t bs = get_optimal_block_size(n);
-                size_t gs = get_grid_size(n, bs);
-                mul_kernel<<<gs, bs>>>(diff.device_ptr(), diff.device_ptr(), sq.device_ptr(), n);
-                CHECK_CUDA_ERROR(cudaGetLastError());
-            }
+            T m = mean(A);
+
+            T sum_sq = reduce_global_impl_with_mean(A, m);
+            return sum_sq / static_cast<T>(n);
+        }
+
+        template <typename T>
+        T reduce_global_impl_with_mean(const CudaTensor<T>& A, T mean_val)
+        {
+            size_t n = A.size();
+            if (n == 0) return T(0);
 
             size_t block_size = get_optimal_block_size(n);
             size_t grid_size = (n + block_size * 2 - 1) / (block_size * 2);
             grid_size = std::min(grid_size, size_t(2147483647));
-            T* d_sum;
-            cudaMalloc(reinterpret_cast<void**>(&d_sum), grid_size * sizeof(T));
-            reduce_kernel_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(sq.device_ptr(), d_sum, n);
+
+            auto& pool = CudaMemoryPool::instance();
+            T* d_intermediate = static_cast<T*>(pool.acquire(grid_size * sizeof(T)));
+
+            reduce_kernel_sqdiff_sum<<<grid_size, block_size, block_size * sizeof(T)>>>(A.device_ptr(), mean_val, d_intermediate, n);
             CHECK_CUDA_ERROR(cudaGetLastError());
 
             std::vector<T> h(grid_size);
-            cudaMemcpy(h.data(), d_sum, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
-            cudaFree(d_sum);
+            cudaMemcpy(h.data(), d_intermediate, grid_size * sizeof(T), cudaMemcpyDeviceToHost);
 
-            T sum_sq = T(0);
-            for (size_t i = 0; i < grid_size; ++i) sum_sq += h[i];
-            return sum_sq / static_cast<T>(n);
+            T result = T(0);
+            for (size_t i = 0; i < grid_size; ++i) result += h[i];
+
+            pool.release(d_intermediate);
+            return result;
         }
 
         // ---- stddev ----

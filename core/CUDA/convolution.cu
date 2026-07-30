@@ -1,76 +1,186 @@
 #include "convolution.hpp"
+#include "cuda_stream.hpp"
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 #include <stdexcept>
 
 namespace TensorN
 {
     namespace cuda
     {
-        // Helper function to calculate optimal block size
         inline size_t get_optimal_block_size(size_t n) {
             if (n <= 0) return 256;
-            // For small tensors, use smaller block size
             if (n < 1024) return std::min(n, size_t(256));
-            // For medium tensors, use 512
             if (n < 1024 * 1024) return 512;
-            // For large tensors, use 1024 (max for most GPUs)
             return 1024;
         }
 
-        // Helper function to calculate grid size with limit check
         inline size_t get_grid_size(size_t n, size_t block_size) {
             if (n == 0 || block_size == 0) return 0;
             size_t grid_size = (n + block_size - 1) / block_size;
-            // CUDA grid size limit (2^31 - 1 for compute capability >= 3.0)
             const size_t MAX_GRID_SIZE = 2147483647;
             return std::min(grid_size, MAX_GRID_SIZE);
         }
 
+        // GPU im2col kernel: transforms input patches into column matrix
         template <typename T>
-        __global__ void conv2d_kernel(const T* input, const T* weight, const T* bias, T* output,
-                                     size_t batch, size_t in_channels, size_t out_channels,
-                                     size_t height, size_t width,
-                                     size_t kernel_h, size_t kernel_w,
-                                     size_t out_height, size_t out_width,
-                                     int stride, int padding, size_t bias_size)
+        __global__ void im2col_kernel(const T* input,
+            size_t C, size_t H, size_t W,
+            size_t kH, size_t kW,
+            int stride, int padding,
+            size_t oH, size_t oW,
+            T* col)
         {
             size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            size_t total = batch * out_channels * out_height * out_width;
+            size_t total = oH * oW;
+            if (idx >= total) return;
 
-            if (idx < total)
-            {
-                size_t w = idx % out_width;
-                size_t h = (idx / out_width) % out_height;
-                size_t oc = (idx / (out_width * out_height)) % out_channels;
-                size_t b = idx / (out_width * out_height * out_channels);
+            size_t oh = idx / oW;
+            size_t ow = idx % oW;
 
-                T sum = 0;
+            size_t col_row_size = C * kH * kW;
+            T* col_row = col + idx * col_row_size;
 
-                for (size_t ic = 0; ic < in_channels; ++ic)
-                {
-                    for (size_t kh = 0; kh < kernel_h; ++kh)
-                    {
-                        for (size_t kw = 0; kw < kernel_w; ++kw)
-                        {
-                            int ih = static_cast<int>(h) * stride - padding + static_cast<int>(kh);
-                            int iw = static_cast<int>(w) * stride - padding + static_cast<int>(kw);
-
-                            if (ih >= 0 && static_cast<size_t>(ih) < height &&
-                                iw >= 0 && static_cast<size_t>(iw) < width)
-                            {
-                                size_t input_idx = ((b * in_channels + ic) * height + ih) * width + iw;
-                                size_t weight_idx = ((oc * in_channels + ic) * kernel_h + kh) * kernel_w + kw;
-                                sum += input[input_idx] * weight[weight_idx];
-                            }
-                        }
+            size_t col_idx = 0;
+            for (size_t c = 0; c < C; ++c) {
+                for (size_t kh = 0; kh < kH; ++kh) {
+                    for (size_t kw = 0; kw < kW; ++kw) {
+                        int ih = static_cast<int>(oh * stride + kh) - padding;
+                        int iw = static_cast<int>(ow * stride + kw) - padding;
+                        if (ih >= 0 && static_cast<size_t>(ih) < H &&
+                            iw >= 0 && static_cast<size_t>(iw) < W)
+                            col_row[col_idx] = input[(c * H + ih) * W + iw];
+                        else
+                            col_row[col_idx] = T(0);
+                        ++col_idx;
                     }
                 }
-
-                if (bias != nullptr && bias_size > 0)
-                    sum += bias[oc];
-
-                output[idx] = sum;
             }
+        }
+
+        // Bias add kernel
+        template <typename T>
+        __global__ void bias_add_kernel(T* output, const T* bias,
+            size_t batch, size_t out_channels,
+            size_t out_height, size_t out_width) {
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            size_t total = batch * out_channels * out_height * out_width;
+            if (idx < total) {
+                size_t oc = (idx / (out_width * out_height)) % out_channels;
+                output[idx] += bias[oc];
+            }
+        }
+
+        template <typename T>
+        void conv2d(const CudaTensor<T>& input,
+                   const CudaTensor<T>& weight,
+                   const CudaTensor<T>& bias,
+                   CudaTensor<T>& output,
+                   int stride,
+                   int padding,
+                   cudaStream_t stream)
+        {
+            if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
+                TENSOR_THROW("conv2d requires 4D tensors");
+
+            size_t batch = input.shape()[0];
+            size_t in_channels = input.shape()[1];
+            size_t height = input.shape()[2];
+            size_t width = input.shape()[3];
+
+            size_t out_channels = weight.shape()[0];
+            size_t kernel_h = weight.shape()[2];
+            size_t kernel_w = weight.shape()[3];
+
+            size_t out_height = (height + 2 * padding - kernel_h) / stride + 1;
+            size_t out_width = (width + 2 * padding - kernel_w) / stride + 1;
+
+            if (output.shape()[0] != batch || output.shape()[1] != out_channels ||
+                output.shape()[2] != out_height || output.shape()[3] != out_width)
+                TENSOR_THROW("Output tensor has wrong shape");
+
+            size_t col_size = in_channels * kernel_h * kernel_w * out_height * out_width;
+            auto& pool = CudaMemoryPool::instance();
+
+            int M = static_cast<int>(out_channels);
+            int Nn = static_cast<int>(out_height * out_width);
+            int Kk = static_cast<int>(in_channels * kernel_h * kernel_w);
+
+            auto& blas_handle = get_stream_blas_handle();
+            blas_handle.set_stream(stream);
+
+            T alpha = T(1), beta = T(0);
+            const T* weight_ptr = weight.device_ptr();
+
+            for (size_t n = 0; n < batch; ++n)
+            {
+                const T* input_batch = input.device_ptr() + n * in_channels * height * width;
+                T* output_batch = output.device_ptr() + n * out_channels * out_height * out_width;
+
+                T* d_col = static_cast<T*>(pool.acquire(col_size * sizeof(T)));
+
+                size_t col_grid_size = get_grid_size(out_height * out_width,
+                    get_optimal_block_size(out_height * out_width));
+                im2col_kernel<<<col_grid_size, get_optimal_block_size(out_height * out_width), 0, stream>>>(
+                    input_batch, in_channels, height, width, kernel_h, kernel_w,
+                    stride, padding, out_height, out_width, d_col);
+                CHECK_CUDA_ERROR(cudaGetLastError());
+
+                cublasStatus_t stat;
+                if constexpr (std::is_same_v<T, float>)
+                    stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        Nn, M, Kk, &alpha, d_col, Nn,
+                        weight_ptr, Kk, &beta, output_batch, Nn);
+                else if constexpr (std::is_same_v<T, double>)
+                    stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        Nn, M, Kk, &alpha, d_col, Nn,
+                        weight_ptr, Kk, &beta, output_batch, Nn);
+                else
+                {
+                    pool.release(d_col);
+                    TENSOR_THROW("cuBLAS conv2d only supports float/double");
+                }
+
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                {
+                    pool.release(d_col);
+                    TENSOR_THROW("cuBLAS gemm failed in conv2d");
+                }
+
+                pool.release(d_col);
+            }
+
+            if (bias.size() > 0)
+            {
+                size_t total = batch * out_channels * out_height * out_width;
+                size_t bs = get_optimal_block_size(total);
+                size_t gs = get_grid_size(total, bs);
+                bias_add_kernel<<<gs, bs, 0, stream>>>(output.device_ptr(), bias.device_ptr(),
+                    batch, out_channels, out_height, out_width);
+                CHECK_CUDA_ERROR(cudaGetLastError());
+            }
+        }
+
+        template <typename T>
+        void conv2d(const CudaTensor<T>& input,
+                   const CudaTensor<T>& weight,
+                   const CudaTensor<T>& bias,
+                   CudaTensor<T>& output,
+                   int stride,
+                   int padding)
+        {
+            conv2d(input, weight, bias, output, stride, padding, nullptr);
+        }
+
+        template <typename T>
+        void conv2d(const CudaTensor<T>& input,
+                   const CudaTensor<T>& weight,
+                   CudaTensor<T>& output,
+                   int stride,
+                   int padding)
+        {
+            CudaTensor<T> empty_bias;
+            conv2d(input, weight, empty_bias, output, stride, padding, nullptr);
         }
 
         template <typename T>
@@ -119,84 +229,6 @@ namespace TensorN
                 }
 
                 output[idx] = sum;
-            }
-        }
-
-        template <typename T>
-        void conv2d(const CudaTensor<T>& input,
-                   const CudaTensor<T>& weight,
-                   const CudaTensor<T>& bias,
-                   CudaTensor<T>& output,
-                   int stride,
-                   int padding,
-                   cudaStream_t stream)
-        {
-            if (input.shape().size() != 4 || weight.shape().size() != 4 || output.shape().size() != 4)
-                TENSOR_THROW("conv2d requires 4D tensors");
-
-            size_t batch = input.shape()[0];
-            size_t in_channels = input.shape()[1];
-            size_t height = input.shape()[2];
-            size_t width = input.shape()[3];
-
-            size_t out_channels = weight.shape()[0];
-            size_t kernel_h = weight.shape()[2];
-            size_t kernel_w = weight.shape()[3];
-
-            size_t out_height = (height + 2 * padding - kernel_h) / stride + 1;
-            size_t out_width = (width + 2 * padding - kernel_w) / stride + 1;
-
-            if (output.shape()[0] != batch || output.shape()[1] != out_channels ||
-                output.shape()[2] != out_height || output.shape()[3] != out_width)
-                TENSOR_THROW("Output tensor has wrong shape");
-
-            size_t total = batch * out_channels * out_height * out_width;
-            size_t block_size = get_optimal_block_size(total);
-            size_t grid_size = get_grid_size(total, block_size);
-
-            size_t bias_size = bias.size();
-
-            conv2d_kernel<<<grid_size, block_size, 0, stream>>>(
-                input.device_ptr(), weight.device_ptr(),
-                bias_size > 0 ? bias.device_ptr() : nullptr,
-                output.device_ptr(),
-                batch, in_channels, out_channels, height, width,
-                kernel_h, kernel_w, out_height, out_width,
-                stride, padding, bias_size);
-
-            CHECK_CUDA_ERROR(cudaGetLastError());
-        }
-
-        template <typename T>
-        void conv2d(const CudaTensor<T>& input,
-                   const CudaTensor<T>& weight,
-                   const CudaTensor<T>& bias,
-                   CudaTensor<T>& output,
-                   int stride,
-                   int padding)
-        {
-            conv2d(input, weight, bias, output, stride, padding, nullptr);
-        }
-
-        template <typename T>
-        void conv2d(const CudaTensor<T>& input,
-                   const CudaTensor<T>& weight,
-                   CudaTensor<T>& output,
-                   int stride,
-                   int padding)
-        {
-            CudaTensor<T> empty_bias;
-            conv2d(input, weight, empty_bias, output, stride, padding, nullptr);
-        }
-
-        template <typename T>
-        __global__ void bias_add_kernel(T* output, const T* bias, size_t batch, size_t out_channels,
-                                        size_t out_height, size_t out_width) {
-            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            size_t total = batch * out_channels * out_height * out_width;
-            if (idx < total) {
-                size_t oc = (idx / (out_width * out_height)) % out_channels;
-                output[idx] += bias[oc];
             }
         }
 

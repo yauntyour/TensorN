@@ -431,13 +431,13 @@ namespace TensorN
             if (n == 0) return T(0);
             size_t bs = get_optimal_block_size(n);
             size_t gs = get_grid_size(n, bs);
-            T* d_partial;
-            cudaMalloc(reinterpret_cast<void**>(&d_partial), gs * sizeof(T));
+            auto& pool = CudaMemoryPool::instance();
+            T* d_partial = static_cast<T*>(pool.acquire(gs * sizeof(T)));
             trace_sum_kernel<<<gs, bs, bs * sizeof(T)>>>(A.device_ptr(), d_partial, n, A.shape()[1]);
             CHECK_CUDA_ERROR(cudaGetLastError());
             std::vector<T> h(gs);
             cudaMemcpy(h.data(), d_partial, gs * sizeof(T), cudaMemcpyDeviceToHost);
-            cudaFree(d_partial);
+            pool.release(d_partial);
             T result = T(0);
             for (size_t i = 0; i < gs; ++i) result += h[i];
             return result;
