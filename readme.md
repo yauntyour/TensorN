@@ -34,6 +34,7 @@
 
 - **纯头文件** — 仅需 `#include "TensorN.hpp"` 即可使用
 - **三种加速后端** — 原生 C++、OpenBLAS、CUDA/cuBLAS，共享统一 API 模式
+- **低精度数据类型** — `half`(FP16)、`bfloat16`(BF16)、`tf32`、`fp8_e4m3`、`fp8_e5m2`，CPU 与 GPU 张量核心全链路支持
 - **爱因斯坦求和** — `einsum("ij,jk->ik", A, B)` 实现灵活的张量运算
 - **丰富的运算集** — 线性代数、逐元素数学运算、激活函数、规约、卷积、比较运算
 - **数据 I/O** — CSV、NumPy `.npy`/`.npz`、JSON、PyTorch `.pt`、GGUF 格式，附带 TensorN↔PyTorch 桥接工具
@@ -109,6 +110,7 @@ TensorN
 ├── TensorN.hpp          总入口，包含 core/core.hpp
 ├── core/
 │   ├── core.hpp         统一头文件聚合
+│   ├── dtypes.hpp       低精度数据类型（half / bfloat16 / tf32 / fp8_e4m3 / fp8_e5m2）
 │   ├── tensor.hpp       核心张量类（N 维，行主序）
 │   ├── einsum.hpp       爱因斯坦求和引擎
 │   ├── operations.hpp   高级运算（matmul, dot, outer, gram, ...）
@@ -118,6 +120,7 @@ TensorN
 │   │   └── blas_tensor.hpp
 │   ├── CUDA/            CUDA/cuBLAS 加速后端
 │   │   ├── cuda_tensor.hpp    CudaTensor<T>（设备内存管理、异步传输、零拷贝视图）
+│   │   ├── cublas_ex.hpp      cuBLAS GemmEx 低精度 GEMM 分发（FP16/BF16/TF32/FP8）
 │   │   ├── cuda_stream.hpp    CudaStream、CudaEvent、流池、设备/页锁定内存池
 │   │   ├── fused_kernels.hpp  融合内核（matmul+activation、conv+activation、add_relu 等）
 │   │   ├── matmul.cu          矩阵乘法（cuBLAS，流感知）
@@ -126,7 +129,7 @@ TensorN
 │   │   └── convolution.cu     Conv2d / ConvTranspose2d 内核
 │   ├── GGUF/            GGUF 格式读写
 │   └── cnpy/            NumPy .npy/.npz 格式支持
-├── example/             示例程序（exp1 ~ exp9）
+├── example/             示例程序（exp1 ~ exp10）
 ├── benchmark/           基准测试
 └── tools/               辅助工具（pt_converter.py）
 ```
@@ -181,6 +184,58 @@ TensorN
 
 ---
 
+## 🧮 低精度数据类型（加速计算）
+
+为 GPU 张量核心与推理部署提供的高效数据类型，均实现为纯 C++17 类型（位操作转换，舍入采用 round-to-nearest-even），**同时支持 CPU 运算与 CUDA 内核**：
+
+| 类型 | 别名 | 存储 | 指数/尾数 | 动态范围 | 硬件加速 |
+|---|---|---|---|---|---|
+| `TensorN::half` | `fp16` | 2B | 5/10 (bias 15) | ±65504 | FP16 张量核心 (sm80+) |
+| `TensorN::bfloat16` | `bf16` | 2B | 8/7 (bias 127) | ±3.4e38 | BF16 张量核心 (sm80+) |
+| `TensorN::tf32` | — | 4B | 8/10 (截断) | 同 FP32 | TF32 张量核心 (sm80+) |
+| `TensorN::fp8_e4m3` | — | 1B | 4/3 (bias 7) | ±448 | FP8 张量核心 (sm89+) |
+| `TensorN::fp8_e5m2` | — | 1B | 5/2 (bias 15) | ±57344 | FP8 张量核心 (sm89+) |
+
+### 基本用法
+
+```cpp
+#include "TensorN.hpp"
+using namespace TensorN;
+using TensorN::fp16;  // CUDA/OpenBLAS 头文件在全局命名空间声明了 half/bfloat16，
+using TensorN::bf16;  // 使用别名或全限定名 TensorN::half 避免二义
+
+Tensor<fp16> A({2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+auto C = matmul(A, A.tensor);            // CPU：einsum 自动支持
+fp16 s = blas::sum(A);                   // 规约、逐元素运算均可用
+
+std::cout << dtype_of<fp16>() << "\n";   // 类型自省：dtype_t::Float16
+std::cout << name_of<bf16>() << "\n";    // "bfloat16"
+A.save("w.pt");                          // .pt 序列化支持全部新类型
+auto W = load<fp16>("w.pt");
+```
+
+### CUDA 张量核心
+
+```cpp
+auto a_dev = CudaTensor<fp16>(A);        // 布局与 __half 位兼容，零转换
+auto b_dev = CudaTensor<fp16>(B);
+CudaTensor<fp16> c_dev({M, N});
+cuda::matmul(a_dev, b_dev, c_dev);       // cublasGemmEx，FP32 累加
+
+CudaTensor<bf16> dbf(...);               // BF16 同理
+CudaTensor<tf32> dtf(...);               // TF32 存储 + CUBLAS_COMPUTE_32F_FAST_TF32
+
+cuda::set_tf32(true);                    // 全局开关：float matmul 也走 TF32 张量核心
+cuda::matmul(a_f32, b_f32, c_f32);
+cuda::set_tf32(false);
+```
+
+- FP16/BF16/TF32 需要 compute capability ≥ 8.0（Ampere+），FP8 GEMM 需要 ≥ 8.9（Ada/Hopper/Blackwell）且 M/N/K 为 16 的倍数
+- FP8 GEMM 取决于 cuBLAS 对具体硬件的支持（如消费级 Blackwell sm120 目前返回 `CUBLAS_STATUS_NOT_SUPPORTED`，会抛出带说明的异常）；FP8 的存储与逐元素运算在所有平台可用
+- 低精度类型的运算在 float 中执行、每次运算按 RNE 舍入一次；CUDA GEMM 使用 FP32 累加，精度优于 CPU 端逐 T 累加
+
+---
+
 ## 💾 数据 I/O
 
 ```cpp
@@ -194,7 +249,7 @@ tensor.save("data.gguf");  // GGUF 格式（支持附加元数据）
 auto t = load<float>("data.pt");  // 根据扩展名自动检测
 ```
 
-**支持类型：** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`
+**支持类型：** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`, `half`, `bfloat16`, `tf32`, `fp8_e4m3`, `fp8_e5m2`（`.pt` 格式支持全部类型；`.npy`/`.npz`/`.json` 仅支持数值类型）
 
 **与 PyTorch 互操作：** 使用 `tools/pt_converter.py` 可在 TensorN `.pt` 和 PyTorch `.pth` 之间相互转换：
 

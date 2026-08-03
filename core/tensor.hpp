@@ -13,6 +13,7 @@
 #include <numeric>
 #include <cassert>
 #include <functional>
+#include "dtypes.hpp"
 #include "memory_pool.hpp"
 
 #ifndef __restrict

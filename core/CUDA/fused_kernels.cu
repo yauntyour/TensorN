@@ -1,8 +1,10 @@
 #include "fused_kernels.hpp"
+#include "cublas_ex.hpp"
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <stdexcept>
 #include <cmath>
+#include <type_traits>
 
 namespace TensorN { namespace cuda {
 
@@ -148,22 +150,33 @@ void matmul_activation(const CudaTensor<T>& A, const CudaTensor<T>& B,
     auto& blas_handle = get_stream_blas_handle();
     blas_handle.set_stream(stream);
 
-    T alpha = T(1), beta = T(0);
     cublasStatus_t stat;
     if constexpr (std::is_same_v<T, float>)
+    {
+        float alpha = 1.0f, beta = 0.0f;
         stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
             static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
             &alpha, B.device_ptr(), static_cast<int>(N),
             A.device_ptr(), static_cast<int>(K),
             &beta, C.device_ptr(), static_cast<int>(N));
+    }
     else if constexpr (std::is_same_v<T, double>)
+    {
+        double alpha = 1.0, beta = 0.0;
         stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
             static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
             &alpha, B.device_ptr(), static_cast<int>(N),
             A.device_ptr(), static_cast<int>(K),
             &beta, C.device_ptr(), static_cast<int>(N));
+    }
+    else if constexpr (detail::is_gemmex_type<T>::value)
+    {
+        detail::gemm_ex<T>(blas_handle.get(), M, N, K,
+            A.device_ptr(), B.device_ptr(), C.device_ptr());
+        stat = CUBLAS_STATUS_SUCCESS;
+    }
     else
-        TENSOR_THROW("matmul_activation only supports float/double");
+        TENSOR_THROW("matmul_activation: unsupported type");
 
     if (stat != CUBLAS_STATUS_SUCCESS)
         TENSOR_THROW("cuBLAS gemm failed in matmul_activation");
@@ -294,5 +307,21 @@ template void batchnorm_inference<float>(const CudaTensor<float>&, const CudaTen
 template void batchnorm_inference<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, double, size_t, cudaStream_t);
 template void residual_block<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int, cudaStream_t);
 template void residual_block<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int, cudaStream_t);
+
+#define INST_LOWP(T) \
+    template void matmul_activation<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, ActivationType, T, cudaStream_t); \
+    template void conv2d_activation<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int, ActivationType, T, cudaStream_t); \
+    template void add_relu<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+    template void mul_add<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+    template void batchnorm_inference<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, T, size_t, cudaStream_t); \
+    template void residual_block<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int, cudaStream_t);
+
+INST_LOWP(TensorN::half)
+INST_LOWP(TensorN::bfloat16)
+INST_LOWP(TensorN::tf32)
+#if CUDART_VERSION >= 12000
+INST_LOWP(TensorN::fp8_e4m3)
+INST_LOWP(TensorN::fp8_e5m2)
+#endif
 
 }} // namespace TensorN::cuda

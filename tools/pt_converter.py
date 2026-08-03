@@ -41,14 +41,31 @@ MAGIC = b"TENSORPT!"
 VERSION = 1
 VERSION_MULTI = 2
 
-DTYPE_TO_ENUM = {
-    np.dtype("float32"): 0,
-    np.dtype("float64"): 1,
-    np.dtype("int32"):   2,
-    np.dtype("int64"):   3,
-    np.dtype("uint8"):   4,
-    np.dtype("int16"):   5,
-}
+def _build_dtype_map():
+    m = {
+        np.dtype("float32"): 0,
+        np.dtype("float64"): 1,
+        np.dtype("int32"):   2,
+        np.dtype("int64"):   3,
+        np.dtype("uint8"):   4,
+        np.dtype("int16"):   5,
+    }
+    # extended low-precision types (depend on NumPy version)
+    for name, enum in (("float16", 6), ("bfloat16", 7)):
+        try:
+            m[np.dtype(name)] = enum
+        except TypeError:
+            pass
+    # 8: tf32 (no native NumPy dtype) — np.float8_e4m3fn / np.float8_e5m2 need NumPy >= 2.0
+    for name, enum in (("float8_e4m3fn", 9), ("float8_e5m2", 10)):
+        try:
+            m[np.dtype(name)] = enum
+        except TypeError:
+            pass
+    return m
+
+
+DTYPE_TO_ENUM = _build_dtype_map()
 
 ENUM_TO_DTYPE = {v: k for k, v in DTYPE_TO_ENUM.items()}
 

@@ -608,5 +608,29 @@ namespace TensorN
         template float stddev<float>(const CudaTensor<float>&);
         template double stddev<double>(const CudaTensor<double>&);
 
+#define INST_LOWP(T) \
+        template T sum<T>(const CudaTensor<T>&); \
+        template T mean<T>(const CudaTensor<T>&); \
+        template T max<T>(const CudaTensor<T>&); \
+        template T min<T>(const CudaTensor<T>&); \
+        template CudaTensor<T> sum_axis<T>(const CudaTensor<T>&, int); \
+        template CudaTensor<T> mean_axis<T>(const CudaTensor<T>&, int); \
+        template CudaTensor<T> max_axis<T>(const CudaTensor<T>&, int); \
+        template CudaTensor<T> min_axis<T>(const CudaTensor<T>&, int); \
+        template CudaTensor<int64_t> argmax<T>(const CudaTensor<T>&, int); \
+        template CudaTensor<int64_t> argmin<T>(const CudaTensor<T>&, int); \
+        template T norm<T>(const CudaTensor<T>&); \
+        template T frobenius_norm<T>(const CudaTensor<T>&); \
+        template T var<T>(const CudaTensor<T>&); \
+        template T stddev<T>(const CudaTensor<T>&);
+
+        INST_LOWP(TensorN::half)
+        INST_LOWP(TensorN::bfloat16)
+        INST_LOWP(TensorN::tf32)
+#if CUDART_VERSION >= 12000
+        INST_LOWP(TensorN::fp8_e4m3)
+        INST_LOWP(TensorN::fp8_e5m2)
+#endif
+
     } // namespace cuda
 } // namespace TensorN

@@ -110,7 +110,10 @@ __global__ void pow(const T* A, T exponent, T* C, size_t n) {
 template <typename T>
 __global__ void clip(const T* A, T min_val, T max_val, T* C, size_t n) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) C[idx] = ::min(::max(A[idx], min_val), max_val);
+    if (idx < n) {
+        T v = A[idx];
+        C[idx] = v < min_val ? min_val : (v > max_val ? max_val : v);
+    }
 }
 template <typename T>
 __global__ void relu(const T* A, T* C, size_t n) {
@@ -541,7 +544,48 @@ template<typename T> void transpose(const CudaTensor<T>& A, CudaTensor<T>& C, cu
     template void greater_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
     template void less_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&);
 
+// softmax excluded for low-precision types (requires atomicAdd on the tensor type)
+#define INST_LOWP(T) \
+    template void add<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
+    template void subtract<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
+    template void multiply<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
+    template void divide<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<T>&); \
+    template void add_scalar<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void multiply_scalar<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void subtract_scalar<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void divide_scalar<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void negate<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void abs<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void sqrt<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void exp<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void log<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void sin<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void cos<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void pow<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void clip<T>(const CudaTensor<T>&,T,T,CudaTensor<T>&); \
+    template void relu<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void leaky_relu<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void elu<T>(const CudaTensor<T>&,T,CudaTensor<T>&); \
+    template void gelu<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void sigmoid<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void tanh<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void transpose<T>(const CudaTensor<T>&,CudaTensor<T>&); \
+    template void equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
+    template void not_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
+    template void greater<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
+    template void less<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
+    template void greater_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&); \
+    template void less_equal<T>(const CudaTensor<T>&,const CudaTensor<T>&,CudaTensor<int>&);
+
 INST(float)
 INST(double)
+
+INST_LOWP(TensorN::half)
+INST_LOWP(TensorN::bfloat16)
+INST_LOWP(TensorN::tf32)
+#if CUDART_VERSION >= 12000
+INST_LOWP(TensorN::fp8_e4m3)
+INST_LOWP(TensorN::fp8_e5m2)
+#endif
 
 }} // namespace TensorN::cuda

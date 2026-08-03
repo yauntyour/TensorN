@@ -235,6 +235,7 @@ if(TENSORN_BUILD_EXAMPLES)
         example/exp7.cpp
         example/exp8.cpp
         example/exp9.cpp
+        example/exp10.cpp
     )
     
     foreach(EXAMPLE_SOURCE ${TENSORN_EXAMPLES})

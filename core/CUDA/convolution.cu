@@ -1,8 +1,10 @@
 #include "convolution.hpp"
+#include "cublas_ex.hpp"
 #include "cuda_stream.hpp"
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <stdexcept>
+#include <type_traits>
 
 namespace TensorN
 {
@@ -109,7 +111,6 @@ namespace TensorN
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(stream);
 
-            T alpha = T(1), beta = T(0);
             const T* weight_ptr = weight.device_ptr();
 
             for (size_t n = 0; n < batch; ++n)
@@ -128,13 +129,26 @@ namespace TensorN
 
                 cublasStatus_t stat;
                 if constexpr (std::is_same_v<T, float>)
+                {
+                    float alpha = 1.0f, beta = 0.0f;
                     stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
                         Nn, M, Kk, &alpha, d_col, Nn,
                         weight_ptr, Kk, &beta, output_batch, Nn);
+                }
                 else if constexpr (std::is_same_v<T, double>)
+                {
+                    double alpha = 1.0, beta = 0.0;
                     stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
                         Nn, M, Kk, &alpha, d_col, Nn,
                         weight_ptr, Kk, &beta, output_batch, Nn);
+                }
+                else if constexpr (detail::is_gemmex_type<T>::value)
+                {
+                    detail::gemm_ex<T>(blas_handle.get(),
+                        static_cast<size_t>(M), static_cast<size_t>(Nn), static_cast<size_t>(Kk),
+                        weight_ptr, d_col, output_batch);
+                    stat = CUBLAS_STATUS_SUCCESS;
+                }
                 else
                 {
                     pool.release(d_col);
@@ -300,6 +314,21 @@ namespace TensorN
         template void conv_transpose2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int);
         template void conv_transpose2d<float>(const CudaTensor<float>&, const CudaTensor<float>&, const CudaTensor<float>&, CudaTensor<float>&, int, int, cudaStream_t);
         template void conv_transpose2d<double>(const CudaTensor<double>&, const CudaTensor<double>&, const CudaTensor<double>&, CudaTensor<double>&, int, int, cudaStream_t);
+
+#define INST_LOWP(T) \
+        template void conv2d<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int); \
+        template void conv2d<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int, cudaStream_t); \
+        template void conv2d<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int); \
+        template void conv_transpose2d<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int); \
+        template void conv_transpose2d<T>(const CudaTensor<T>&, const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, int, int, cudaStream_t);
+
+        INST_LOWP(TensorN::half)
+        INST_LOWP(TensorN::bfloat16)
+        INST_LOWP(TensorN::tf32)
+#if CUDART_VERSION >= 12000
+        INST_LOWP(TensorN::fp8_e4m3)
+        INST_LOWP(TensorN::fp8_e5m2)
+#endif
 
     } // namespace cuda
 } // namespace TensorN

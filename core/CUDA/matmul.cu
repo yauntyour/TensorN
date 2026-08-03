@@ -1,12 +1,27 @@
 #include "matmul.hpp"
+#include "cublas_ex.hpp"
+#include "cuda_tensor.hpp"
+#include "cuda_stream.hpp"
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <stdexcept>
+#include <cmath>
+#include <type_traits>
 
 namespace TensorN
 {
     namespace cuda
     {
+        void set_tf32(bool enabled)
+        {
+            detail::tf32_flag_impl() = enabled;
+        }
+
+        bool tf32_enabled()
+        {
+            return detail::tf32_flag_impl();
+        }
+
         // Helper function to calculate optimal block size
         inline size_t get_optimal_block_size(size_t n) {
             if (n <= 0) return 256;
@@ -119,29 +134,52 @@ namespace TensorN
             if (C.shape()[0] != M || C.shape()[1] != N)
                 TENSOR_THROW("Output tensor has wrong shape");
 
-            T alpha = T(1), beta = T(0);
-
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(stream);
 
-            cublasStatus_t stat;
             if constexpr (std::is_same_v<T, float>)
-                stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
-                    static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
-                    &alpha, B.device_ptr(), static_cast<int>(N),
-                    A.device_ptr(), static_cast<int>(K),
-                    &beta, C.device_ptr(), static_cast<int>(N));
+            {
+                float alpha = 1.0f, beta = 0.0f;
+                cublasStatus_t stat;
+                if (tf32_enabled())
+                {
+                    cublasSetMathMode(blas_handle.get(), CUBLAS_TF32_TENSOR_OP_MATH);
+                    stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
+                        &alpha, B.device_ptr(), static_cast<int>(N),
+                        A.device_ptr(), static_cast<int>(K),
+                        &beta, C.device_ptr(), static_cast<int>(N));
+                    cublasSetMathMode(blas_handle.get(), CUBLAS_DEFAULT_MATH);
+                }
+                else
+                {
+                    stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
+                        &alpha, B.device_ptr(), static_cast<int>(N),
+                        A.device_ptr(), static_cast<int>(K),
+                        &beta, C.device_ptr(), static_cast<int>(N));
+                }
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gemm failed");
+            }
             else if constexpr (std::is_same_v<T, double>)
-                stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+            {
+                double alpha = 1.0, beta = 0.0;
+                cublasStatus_t stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
                     static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
                     &alpha, B.device_ptr(), static_cast<int>(N),
                     A.device_ptr(), static_cast<int>(K),
                     &beta, C.device_ptr(), static_cast<int>(N));
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gemm failed");
+            }
+            else if constexpr (detail::is_gemmex_type<T>::value)
+            {
+                detail::gemm_ex<T>(blas_handle.get(), M, N, K,
+                    A.device_ptr(), B.device_ptr(), C.device_ptr());
+            }
             else
-                TENSOR_THROW("cuBLAS matmul only supports float/double");
-
-            if (stat != CUBLAS_STATUS_SUCCESS)
-                TENSOR_THROW("cuBLAS gemm failed");
+                TENSOR_THROW("cuBLAS matmul: unsupported type");
         }
 
         template <typename T>
@@ -166,35 +204,71 @@ namespace TensorN
             if (C.shape()[0] != batch_size || C.shape()[1] != M || C.shape()[2] != N)
                 TENSOR_THROW("Output tensor has wrong shape");
 
-            T alpha = T(1), beta = T(0);
-
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(stream);
 
-            long long strideA = static_cast<long long>(M * K);
-            long long strideB = static_cast<long long>(K * N);
-            long long strideC = static_cast<long long>(M * N);
-
-            cublasStatus_t stat;
             if constexpr (std::is_same_v<T, float>)
-                stat = cublasSgemmStridedBatched(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
-                    static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
-                    &alpha, B.device_ptr(), static_cast<int>(N), strideB,
-                    A.device_ptr(), static_cast<int>(K), strideA,
-                    &beta, C.device_ptr(), static_cast<int>(N), strideC,
-                    static_cast<int>(batch_size));
-            else if constexpr (std::is_same_v<T, double>)
-                stat = cublasDgemmStridedBatched(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
-                    static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
-                    &alpha, B.device_ptr(), static_cast<int>(N), strideB,
-                    A.device_ptr(), static_cast<int>(K), strideA,
-                    &beta, C.device_ptr(), static_cast<int>(N), strideC,
-                    static_cast<int>(batch_size));
-            else
-                TENSOR_THROW("cuBLAS batched matmul only supports float/double");
+            {
+                float alpha = 1.0f, beta = 0.0f;
+                long long strideA = static_cast<long long>(M * K);
+                long long strideB = static_cast<long long>(K * N);
+                long long strideC = static_cast<long long>(M * N);
 
-            if (stat != CUBLAS_STATUS_SUCCESS)
-                TENSOR_THROW("cuBLAS strided batched gemm failed");
+                cublasStatus_t stat;
+                if (tf32_enabled())
+                {
+                    cublasSetMathMode(blas_handle.get(), CUBLAS_TF32_TENSOR_OP_MATH);
+                    stat = cublasSgemmStridedBatched(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
+                        &alpha, B.device_ptr(), static_cast<int>(N), strideB,
+                        A.device_ptr(), static_cast<int>(K), strideA,
+                        &beta, C.device_ptr(), static_cast<int>(N), strideC,
+                        static_cast<int>(batch_size));
+                    cublasSetMathMode(blas_handle.get(), CUBLAS_DEFAULT_MATH);
+                }
+                else
+                {
+                    stat = cublasSgemmStridedBatched(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                        static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
+                        &alpha, B.device_ptr(), static_cast<int>(N), strideB,
+                        A.device_ptr(), static_cast<int>(K), strideA,
+                        &beta, C.device_ptr(), static_cast<int>(N), strideC,
+                        static_cast<int>(batch_size));
+                }
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS strided batched gemm failed");
+            }
+            else if constexpr (std::is_same_v<T, double>)
+            {
+                double alpha = 1.0, beta = 0.0;
+                long long strideA = static_cast<long long>(M * K);
+                long long strideB = static_cast<long long>(K * N);
+                long long strideC = static_cast<long long>(M * N);
+
+                cublasStatus_t stat = cublasDgemmStridedBatched(blas_handle.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                    static_cast<int>(N), static_cast<int>(M), static_cast<int>(K),
+                    &alpha, B.device_ptr(), static_cast<int>(N), strideB,
+                    A.device_ptr(), static_cast<int>(K), strideA,
+                    &beta, C.device_ptr(), static_cast<int>(N), strideC,
+                    static_cast<int>(batch_size));
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS strided batched gemm failed");
+            }
+            else if constexpr (detail::is_gemmex_type<T>::value)
+            {
+                const size_t strideA = M * K;
+                const size_t strideB = K * N;
+                const size_t strideC = M * N;
+                for (size_t b = 0; b < batch_size; ++b)
+                {
+                    detail::gemm_ex<T>(blas_handle.get(), M, N, K,
+                        A.device_ptr() + b * strideA,
+                        B.device_ptr() + b * strideB,
+                        C.device_ptr() + b * strideC);
+                }
+            }
+            else
+                TENSOR_THROW("cuBLAS batched matmul: unsupported type");
         }
 
         template <typename T>
@@ -217,18 +291,30 @@ namespace TensorN
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(stream);
 
-            cublasStatus_t stat;
             if constexpr (std::is_same_v<T, float>)
-                stat = cublasSdot(blas_handle.get(), static_cast<int>(n),
-                    A.device_ptr(), 1, B.device_ptr(), 1, &result);
+            {
+                float res = 0.0f;
+                cublasStatus_t stat = cublasSdot(blas_handle.get(), static_cast<int>(n),
+                    A.device_ptr(), 1, B.device_ptr(), 1, &res);
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS dot failed");
+                result = T(res);
+            }
             else if constexpr (std::is_same_v<T, double>)
-                stat = cublasDdot(blas_handle.get(), static_cast<int>(n),
-                    A.device_ptr(), 1, B.device_ptr(), 1, &result);
+            {
+                double res = 0.0;
+                cublasStatus_t stat = cublasDdot(blas_handle.get(), static_cast<int>(n),
+                    A.device_ptr(), 1, B.device_ptr(), 1, &res);
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS dot failed");
+                result = T(res);
+            }
+            else if constexpr (detail::is_gemmex_type<T>::value)
+            {
+                result = detail::dot_ex<T>(blas_handle.get(), n, A.device_ptr(), B.device_ptr());
+            }
             else
-                TENSOR_THROW("cuBLAS dot only supports float/double");
-
-            if (stat != CUBLAS_STATUS_SUCCESS)
-                TENSOR_THROW("cuBLAS dot failed");
+                TENSOR_THROW("cuBLAS dot: unsupported type");
 
             return result;
         }
@@ -284,6 +370,41 @@ namespace TensorN
         template float dot<float>(const CudaTensor<float>&, const CudaTensor<float>&, cudaStream_t);
         template double dot<double>(const CudaTensor<double>&, const CudaTensor<double>&, cudaStream_t);
 
+#define INST_LOWP(T) \
+        template void matmul<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void matmul<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void batched_matmul<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void batched_matmul<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void matmul_cublas<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void matmul_cublas<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void batched_matmul_cublas<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void batched_matmul_cublas<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template T dot<T>(const CudaTensor<T>&, const CudaTensor<T>&); \
+        template T dot<T>(const CudaTensor<T>&, const CudaTensor<T>&, cudaStream_t); \
+        template void outer<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void outer<T>(const CudaTensor<T>&, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void gram<T>(const CudaTensor<T>&, CudaTensor<T>&); \
+        template void gram<T>(const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void axpy<T>(T, const CudaTensor<T>&, CudaTensor<T>&); \
+        template void axpy<T>(T, const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template T trace<T>(const CudaTensor<T>&); \
+        template void diag<T>(const CudaTensor<T>&, CudaTensor<T>&); \
+        template void diag<T>(const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t); \
+        template void diag_matrix<T>(const CudaTensor<T>&, CudaTensor<T>&); \
+        template void diag_matrix<T>(const CudaTensor<T>&, CudaTensor<T>&, cudaStream_t);
+
+        INST_LOWP(TensorN::half)
+        INST_LOWP(TensorN::bfloat16)
+        INST_LOWP(TensorN::tf32)
+#if CUDART_VERSION >= 12000
+        INST_LOWP(TensorN::fp8_e4m3)
+        INST_LOWP(TensorN::fp8_e5m2)
+#endif
+
+        template TensorN::half bilinear<TensorN::half>(const CudaTensor<TensorN::half>&, const CudaTensor<TensorN::half>&, const CudaTensor<TensorN::half>&);
+        template TensorN::bfloat16 bilinear<TensorN::bfloat16>(const CudaTensor<TensorN::bfloat16>&, const CudaTensor<TensorN::bfloat16>&, const CudaTensor<TensorN::bfloat16>&);
+        template TensorN::tf32 bilinear<TensorN::tf32>(const CudaTensor<TensorN::tf32>&, const CudaTensor<TensorN::tf32>&, const CudaTensor<TensorN::tf32>&);
+
         template <typename T>
         __global__ void outer_kernel(const T* A, const T* B, T* C, size_t m, size_t n)
         {
@@ -323,25 +444,37 @@ namespace TensorN
             if (C.shape()[0] != M || C.shape()[1] != M)
                 TENSOR_THROW("Output shape mismatch for gram");
 
-            T alpha = T(1), beta = T(0);
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(stream);
 
-            cublasStatus_t stat;
             if constexpr (std::is_same_v<T, float>)
-                stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_T, CUBLAS_OP_N,
+            {
+                float alpha = 1.0f, beta = 0.0f;
+                cublasStatus_t stat = cublasSgemm(blas_handle.get(), CUBLAS_OP_T, CUBLAS_OP_N,
                     static_cast<int>(M), static_cast<int>(M), static_cast<int>(N),
                     &alpha, X.device_ptr(), static_cast<int>(N),
                     X.device_ptr(), static_cast<int>(N),
                     &beta, C.device_ptr(), static_cast<int>(M));
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gram failed");
+            }
             else if constexpr (std::is_same_v<T, double>)
-                stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_T, CUBLAS_OP_N,
+            {
+                double alpha = 1.0, beta = 0.0;
+                cublasStatus_t stat = cublasDgemm(blas_handle.get(), CUBLAS_OP_T, CUBLAS_OP_N,
                     static_cast<int>(M), static_cast<int>(M), static_cast<int>(N),
                     &alpha, X.device_ptr(), static_cast<int>(N),
                     X.device_ptr(), static_cast<int>(N),
                     &beta, C.device_ptr(), static_cast<int>(M));
-            if (stat != CUBLAS_STATUS_SUCCESS)
-                TENSOR_THROW("cuBLAS gram failed");
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gram failed");
+            }
+            else if constexpr (detail::is_gemmex_type<T>::value)
+            {
+                detail::gemm_ex_trans<T>(blas_handle.get(), M, N, X.device_ptr(), C.device_ptr());
+            }
+            else
+                TENSOR_THROW("cuBLAS gram: unsupported type");
         }
 
         template <typename T>
@@ -357,24 +490,37 @@ namespace TensorN
                 TENSOR_THROW("bilinear: wrong dimensions");
             size_t M = A.shape()[0], N = A.shape()[1];
 
-            T alpha = T(1), beta = T(0);
             auto& blas_handle = get_stream_blas_handle();
             blas_handle.set_stream(nullptr);
 
-            cublasStatus_t stat;
             CudaTensor<T> temp({M});
             if constexpr (std::is_same_v<T, float>)
-                stat = cublasSgemv(blas_handle.get(), CUBLAS_OP_N,
+            {
+                float alpha = 1.0f, beta = 0.0f;
+                cublasStatus_t stat = cublasSgemv(blas_handle.get(), CUBLAS_OP_N,
                     static_cast<int>(M), static_cast<int>(N),
                     &alpha, A.device_ptr(), static_cast<int>(N),
                     y.device_ptr(), 1, &beta, temp.device_ptr(), 1);
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gemv failed");
+            }
             else if constexpr (std::is_same_v<T, double>)
-                stat = cublasDgemv(blas_handle.get(), CUBLAS_OP_N,
+            {
+                double alpha = 1.0, beta = 0.0;
+                cublasStatus_t stat = cublasDgemv(blas_handle.get(), CUBLAS_OP_N,
                     static_cast<int>(M), static_cast<int>(N),
                     &alpha, A.device_ptr(), static_cast<int>(N),
                     y.device_ptr(), 1, &beta, temp.device_ptr(), 1);
-            if (stat != CUBLAS_STATUS_SUCCESS)
-                TENSOR_THROW("cuBLAS gemv failed");
+                if (stat != CUBLAS_STATUS_SUCCESS)
+                    TENSOR_THROW("cuBLAS gemv failed");
+            }
+            else if constexpr (detail::is_gemmex_type<T>::value)
+            {
+                detail::gemm_ex<T>(blas_handle.get(), M, 1, N,
+                    A.device_ptr(), y.device_ptr(), temp.device_ptr());
+            }
+            else
+                TENSOR_THROW("cuBLAS bilinear: unsupported type");
 
             return dot(x, temp);
         }

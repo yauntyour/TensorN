@@ -9,6 +9,10 @@ namespace TensorN
 {
     namespace cuda
     {
+        // Enable TF32 tensor-core math for float matmul (Ampere+). Default: off.
+        void set_tf32(bool enabled);
+        bool tf32_enabled();
+
         template <typename T>
         void matmul(const CudaTensor<T>& A, const CudaTensor<T>& B, CudaTensor<T>& C);
 

@@ -35,7 +35,12 @@ constexpr bool is_supported_pt_type()
            std::is_same_v<T, int32_t> ||
            std::is_same_v<T, int64_t> ||
            std::is_same_v<T, uint8_t> ||
-           std::is_same_v<T, int16_t>;
+           std::is_same_v<T, int16_t> ||
+           std::is_same_v<T, TensorN::half> ||
+           std::is_same_v<T, TensorN::bfloat16> ||
+           std::is_same_v<T, TensorN::tf32> ||
+           std::is_same_v<T, TensorN::fp8_e4m3> ||
+           std::is_same_v<T, TensorN::fp8_e5m2>;
 }
 
 enum class PTDtype : uint8_t {
@@ -45,6 +50,11 @@ enum class PTDtype : uint8_t {
     INT64   = 3,
     UINT8   = 4,
     INT16   = 5,
+    FLOAT16 = 6,
+    BFLOAT16 = 7,
+    TF32    = 8,
+    FP8_E4M3 = 9,
+    FP8_E5M2 = 10,
 };
 
 constexpr const char PT_MAGIC[] = "TENSORPT!";
@@ -60,6 +70,11 @@ PTDtype get_pt_dtype()
     if constexpr (std::is_same_v<T, int64_t>)     return PTDtype::INT64;
     if constexpr (std::is_same_v<T, uint8_t>)     return PTDtype::UINT8;
     if constexpr (std::is_same_v<T, int16_t>)     return PTDtype::INT16;
+    if constexpr (std::is_same_v<T, TensorN::half>)      return PTDtype::FLOAT16;
+    if constexpr (std::is_same_v<T, TensorN::bfloat16>)  return PTDtype::BFLOAT16;
+    if constexpr (std::is_same_v<T, TensorN::tf32>)      return PTDtype::TF32;
+    if constexpr (std::is_same_v<T, TensorN::fp8_e4m3>)  return PTDtype::FP8_E4M3;
+    if constexpr (std::is_same_v<T, TensorN::fp8_e5m2>)  return PTDtype::FP8_E5M2;
     TENSOR_THROW("Unsupported type for .pt format");
 }
 namespace TensorN
@@ -553,27 +568,37 @@ namespace TensorN
     template <typename T>
     void save_json(const Tensor<T> &A, const std::string &filename)
     {
-        auto &_shape = A.shape();
-        if (!is_supported_json_type<T>())
+        if constexpr (is_supported_json_type<T>())
+        {
+            auto &_shape = A.shape();
+            nlohmann::json j;
+            j["shape"] = _shape;
+            j["data"] = *A.data;
+            std::ofstream file(filename);
+            file << j.dump(2); // pretty print
+        }
+        else
         {
             TENSOR_THROW("Only arithmetic types supported for JSON");
         }
-        nlohmann::json j;
-        j["shape"] = _shape;
-        j["data"] = *A.data;
-        std::ofstream file(filename);
-        file << j.dump(2); // pretty print
     }
 
     template <typename T>
     Tensor<T> load_json(const std::string &filename)
     {
-        std::ifstream file(filename);
-        nlohmann::json j;
-        file >> j;
-        std::vector<size_t> shape = j["shape"].get<std::vector<size_t>>();
-        std::vector<T> data_vec = j["data"].get<std::vector<T>>();
-        return Tensor(shape, data_vec);
+        if constexpr (is_supported_json_type<T>())
+        {
+            std::ifstream file(filename);
+            nlohmann::json j;
+            file >> j;
+            std::vector<size_t> shape = j["shape"].get<std::vector<size_t>>();
+            std::vector<T> data_vec = j["data"].get<std::vector<T>>();
+            return Tensor(shape, data_vec);
+        }
+        else
+        {
+            TENSOR_THROW("Only arithmetic types supported for JSON");
+        }
     }
     template <typename T>
     void Tensor<T>::save(const std::string &filename, const std::string &format) const
