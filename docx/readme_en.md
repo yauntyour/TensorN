@@ -257,79 +257,79 @@ Benchmark covers: matrix multiplication, element-wise operations, activations, r
 ### Sample Results
 
 > **Test environment:** NVIDIA GeForce RTX 5060 Ti (SM 12.0)
-> **Matmul:** 64×64 | **Element-wise:** 4096 elements | **Vector:** 1024 | **Warmup:** 2 | **Repeats:** 5
+> **Matmul:** 512×512 | **Element-wise:** 65536 elements | **Vector:** 4096 | **Warmup:** 2 | **Repeats:** 5
 
-#### Linear Algebra (Matrix 64×64)
-
-| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
-|---|---|---|---|---|---|
-| matmul | 17.976 | 0.144 | 0.019 | 124.9× | 930.0× |
-| gram (X·Xᵀ) | 17.767 | 0.113 | 0.022 | 156.8× | 803.7× |
-| dot (vec 1024) | 0.065 | <0.001 | 0.064 | 147.9× | 1.0× |
-| outer (256) | 4.706 | 0.019 | 0.030 | 252.5× | 154.9× |
-| bilinear (xᵀAy) | 0.301 | 0.001 | 0.079 | 301.3× | 3.8× |
-| axpy (4096) | 0.002 | 0.001 | 0.011 | 1.4× | 0.2× |
-| trace | 0.004 | 0.002 | 0.054 | 1.9× | 0.1× |
-
-#### Element-wise (4096 elements)
+#### Linear Algebra (Matrix 512×512)
 
 | Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
 |---|---|---|---|---|---|
-| add (A+B) | 0.002 | 0.002 | 0.008 | 0.8× | 0.2× |
-| hadamard (A*B) | 0.404 | 0.001 | 0.005 | 311.0× | 84.8× |
-| scalar_mul (A×3.14) | 0.001 | <0.001 | 0.006 | 1.6× | 0.3× |
-| exp | 0.009 | 0.009 | 0.006 | 1.0× | 1.6× |
-| log | 0.012 | 0.013 | 0.011 | 1.0× | 1.1× |
-| sqrt | 0.001 | 0.004 | 0.011 | 0.4× | 0.1× |
-| sin | 0.013 | 0.013 | 0.005 | 1.0× | 2.5× |
-| cos | 0.013 | 0.013 | 0.006 | 1.0× | 2.4× |
-| pow (x²) | 0.027 | 0.026 | 0.006 | 1.0× | 4.8× |
-| abs | <0.001 | 0.001 | 0.009 | 0.4× | 0.1× |
+| matmul | 9101.528 | 64.036 | 0.033 | 142.1× | 279229.1× |
+| gram (X·Xᵀ) | 9561.571 | 64.693 | 0.037 | 147.8× | 260459.5× |
+| dot (vec 4096) | 0.177 | 0.002 | 0.084 | 105.3× | 2.1× |
+| outer (1024) | 70.760 | 0.884 | 0.017 | 80.1× | 4282.1× |
+| bilinear (xᵀAy) | 16.983 | 0.112 | 0.054 | 151.2× | 315.2× |
+| axpy (65536) | 0.033 | 0.018 | 0.010 | 1.8× | 3.3× |
+| trace | 0.012 | 0.010 | 0.050 | 1.1× | 0.2× |
 
-#### Activation Functions (4096 elements)
+#### Element-wise (65536 elements)
 
 | Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
 |---|---|---|---|---|---|
-| relu | 0.002 | 0.002 | 0.006 | 1.4× | 0.3× |
-| sigmoid | 0.010 | 0.010 | 0.009 | 1.0× | 1.2× |
-| tanh | 0.018 | 0.018 | 0.010 | 1.0× | 1.7× |
-| gelu | 0.020 | 0.020 | 0.006 | 1.0× | 3.4× |
-| softmax (axis=1) | 0.465 | 0.425 | 0.033 | 1.1× | 13.9× |
+| add (A+B) | 0.034 | 0.014 | 0.006 | 2.5× | 5.8× |
+| hadamard (A*B) | 7.185 | 0.015 | 0.006 | 490.8× | 1131.8× |
+| scalar_mul (A×3.14) | 0.037 | 0.014 | 0.006 | 2.7× | 6.7× |
+| exp | 0.138 | 0.071 | 0.006 | 1.9× | 22.9× |
+| log | 0.204 | 1.280 | 0.006 | 0.2× | 34.6× |
+| sqrt | 0.018 | 0.447 | 0.006 | 0.0× | 3.2× |
+| sin | 0.255 | 0.368 | 0.010 | 0.7× | 24.7× |
+| cos | 0.256 | 3.761 | 0.007 | 0.1× | 39.3× |
+| pow (x²) | 0.437 | 0.855 | 0.010 | 0.5× | 44.8× |
+| abs | 0.008 | 0.032 | 0.006 | 0.3× | 1.4× |
 
-#### Reductions (4096 elements)
-
-| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
-|---|---|---|---|---|---|
-| sum | 0.094 | <0.001 | 0.047 | 4682.0× | 2.0× |
-| mean | 0.094 | N/A | 0.042 | — | 2.2× |
-| max | <0.001 | <0.001 | 0.054 | 1.1× | 0.0× |
-| min | <0.001 | <0.001 | 0.063 | 1.0× | 0.0× |
-| L2 norm (vec 1024) | 0.068 | <0.001 | 0.068 | 91.9× | 1.0× |
-| frobenius_norm | 0.611 | 0.003 | 0.153 | 210.7× | 4.0× |
-| variance | 0.604 | N/A | 0.100 | — | 6.0× |
-| stddev | 0.457 | <0.001 | 0.085 | 22867.0× | 5.4× |
-| argmax (axis=1) | 0.001 | 0.001 | 0.012 | 1.0× | 0.1× |
-| argmin (axis=1) | 0.001 | 0.001 | 0.013 | 1.0× | 0.1× |
-
-#### Transpose (64×64)
+#### Activation Functions (65536 elements)
 
 | Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
 |---|---|---|---|---|---|
-| transpose | 0.217 | 0.231 | 0.012 | 0.9× | 18.5× |
+| relu | 0.035 | 0.179 | 0.009 | 0.2× | 3.8× |
+| sigmoid | 0.180 | 1.361 | 0.014 | 0.1× | 12.4× |
+| tanh | 0.321 | 0.387 | 0.009 | 0.8× | 36.3× |
+| gelu | 0.369 | 0.509 | 0.006 | 0.7× | 64.6× |
+| softmax (axis=1) | 11.981 | 0.049 | 0.048 | 242.1× | 251.7× |
 
-#### Conv2d (input: 1×3×32×32, kernel: 16×3×3×3, stride=1, pad=1)
-
-| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
-|---|---|---|---|---|---|
-| conv2d | 20.329 | 19.764 | 0.009 | 1.0× | 2183.1× |
-| conv_transpose2d | 21.714 | 28.664 | 0.016 | 0.8× | 1382.0× |
-
-#### Comparison (4096 elements)
+#### Reductions (65536 elements)
 
 | Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
 |---|---|---|---|---|---|
-| greater (A>B) | 0.002 | 0.002 | 0.005 | 1.0× | 0.4× |
-| equal (A==B) | 0.003 | 0.003 | 0.005 | 1.0× | 0.6× |
+| sum | 2.554 | 0.012 | 0.064 | 212.8× | 40.0× |
+| mean | 2.541 | 0.011 | 0.055 | 228.5× | 46.0× |
+| max | 0.004 | 0.004 | 0.045 | 1.0× | 0.1× |
+| min | 0.004 | 0.004 | 0.045 | 1.0× | 0.1× |
+| L2 norm (vec 4096) | 0.302 | 0.003 | 0.044 | 92.0× | 6.9× |
+| frobenius_norm | 9.765 | 0.051 | 0.054 | 192.8× | 181.6× |
+| variance | 7.879 | 0.020 | 0.098 | 385.9× | 80.2× |
+| stddev | 12.446 | 0.026 | 0.096 | 473.9× | 130.2× |
+| argmax (axis=1) | 0.034 | 0.054 | 0.035 | 0.6× | 1.0× |
+| argmin (axis=1) | 0.038 | 0.018 | 0.035 | 2.1× | 1.1× |
+
+#### Transpose (512×512)
+
+| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
+|---|---|---|---|---|---|
+| transpose | 17.296 | 0.375 | 0.011 | 46.1× | 1515.7× |
+
+#### Conv2d (input: 1×3×64×64, kernel: 32×3×3×3, stride=1, pad=1)
+
+| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
+|---|---|---|---|---|---|
+| conv2d | 172.840 | 1.679 | 0.032 | 103.0× | 5343.5× |
+| conv_transpose2d | 180.763 | 5.396 | 0.060 | 33.5× | 3038.0× |
+
+#### Comparison (65536 elements)
+
+| Operation | Native(ms) | OpenBLAS(ms) | cuBLAS(ms) | BLAS/Native | CUDA/Native |
+|---|---|---|---|---|---|
+| greater (A>B) | 0.066 | 0.023 | 0.006 | 2.8× | 10.7× |
+| equal (A==B) | 0.068 | 0.023 | 0.005 | 3.0× | 12.4× |
 
 > Speedup columns show how many times faster the backend is vs Native C++.
 

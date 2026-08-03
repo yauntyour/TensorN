@@ -157,9 +157,9 @@ int main()
     using T = float;
     int warmup = 2;
     int repeats = 5;
-    size_t M = 64;
-    size_t E = 4096;
-    size_t V = 1024;
+    size_t M = 512;
+    size_t E = 65536;
+    size_t V = 4096;
 
     std::cout << "\n";
     std::cout << "================================================================================\n";
@@ -247,8 +247,8 @@ int main()
         // outer
         std::cout << "  > outer..." << std::flush;
         {
-            auto a = random_tensor<T>({256});
-            auto b = random_tensor<T>({256});
+            auto a = random_tensor<T>({1024});
+            auto b = random_tensor<T>({1024});
             nat = bench_cpu([&]{ auto O = TensorN::outer(a, b); }, warmup, repeats);
 #if TENSORN_HAS_OPENBLAS
             blas = bench_cpu([&]{ auto O = TensorN::blas::outer(a, b); }, warmup, repeats);
@@ -256,14 +256,14 @@ int main()
             blas = -1;
 #endif
 #ifdef TENSORN_CUDA_AVAILABLE
-            TensorN::CudaTensor<T> da(a), db(b), dO({256, 256});
+            TensorN::CudaTensor<T> da(a), db(b), dO({1024, 1024});
             cuda = bench_gpu([&]{ TensorN::cuda::outer(da, db, dO); }, warmup, repeats);
 #else
             cuda = -1;
 #endif
         }
         std::cout << " done" << std::endl;
-        print_row("outer (256)", nat, blas, cuda);
+        print_row("outer (1024)", nat, blas, cuda);
 
         // bilinear (x^T A y)
         std::cout << "  > bilinear..." << std::flush;
@@ -335,7 +335,7 @@ int main()
     // ========================================================================
     {
         size_t SZ = E;
-        std::vector<size_t> shape = {64, 64};
+        std::vector<size_t> shape = {256, 256};
         print_section("Element-wise (" + std::to_string(SZ) + " elements)");
 
         auto A = random_tensor<T>(shape);
@@ -512,7 +512,7 @@ int main()
     // 3. Activation Functions
     // ========================================================================
     {
-        std::vector<size_t> shape = {64, 64};
+        std::vector<size_t> shape = {256, 256};
         print_section("Activation Functions (" + std::to_string(E) + " elements)");
 
         auto A = random_tensor<T>(shape);
@@ -622,7 +622,7 @@ int main()
     // 4. Reduction Operations
     // ========================================================================
     {
-        std::vector<size_t> shape = {64, 64};
+        std::vector<size_t> shape = {256, 256};
         print_section("Reduction (" + std::to_string(E) + " elements)");
 
         auto A = random_tensor<T>(shape);
@@ -822,8 +822,8 @@ int main()
     // 6. Convolution
     // ========================================================================
     {
-        size_t cN = 1, cC = 3, cH = 32, cW = 32, cK = 16, kH = 3, kW = 3;
-        print_section("Conv2d (input: 1x3x32x32, kernel: 16x3x3x3, stride=1, pad=1)");
+        size_t cN = 1, cC = 3, cH = 64, cW = 64, cK = 32, kH = 3, kW = 3;
+        print_section("Conv2d (input: 1x3x64x64, kernel: 32x3x3x3, stride=1, pad=1)");
 
         auto input = random_tensor<T>({cN, cC, cH, cW});
         auto weight = random_tensor<T>({cK, cC, kH, kW});
@@ -871,7 +871,7 @@ int main()
     // 7. Comparison Operations
     // ========================================================================
     {
-        std::vector<size_t> shape = {64, 64};
+        std::vector<size_t> shape = {256, 256};
         print_section("Comparison (" + std::to_string(E) + " elements)");
 
         auto A = random_tensor<T>(shape);
