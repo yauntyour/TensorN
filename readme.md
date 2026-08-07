@@ -114,7 +114,7 @@ TensorN
 │   ├── tensor.hpp       核心张量类（N 维，行主序）
 │   ├── einsum.hpp       爱因斯坦求和引擎
 │   ├── operations.hpp   高级运算（matmul, dot, outer, gram, ...）
-│   ├── static.hpp       数据 I/O（csv, npy, npz, json, pt, gguf）
+│   ├── static.hpp       数据 I/O（csv, npy, npz, json, pt, gguf, safetensors）
 │   ├── memory_pool.hpp  CPU 内存池（桶分配器、PooledAllocator、PooledVector）
 │   ├── BLAS/            OpenBLAS 加速后端（OpenMP 多核并行、im2col+GEMM 卷积）
 │   │   └── blas_tensor.hpp
@@ -128,6 +128,8 @@ TensorN
 │   │   ├── reduction.cu       规约内核（sum, mean, max, ...）
 │   │   └── convolution.cu     Conv2d / ConvTranspose2d 内核
 │   ├── GGUF/            GGUF 格式读写
+│   ├── HF/              HuggingFace 格式读写
+│   │   └── safetensors.hpp  safetensors 格式读写（含分片 model.safetensors-00001-of-00001.safetensors）
 │   └── cnpy/            NumPy .npy/.npz 格式支持
 ├── example/             示例程序（exp1 ~ exp10）
 ├── benchmark/           基准测试
@@ -245,11 +247,36 @@ tensor.save("data.npz");   // NumPy 压缩格式
 tensor.save("data.json");  // JSON（包含形状和数据）
 tensor.save("data.pt");    // TensorN .pt 二进制格式（支持 .pt / .pth 扩展名）
 tensor.save("data.gguf");  // GGUF 格式（支持附加元数据）
+tensor.save("data.safetensors");                 // safetensors 格式
+tensor.save("model.safetensors-00001-of-00001.safetensors"); // safetensors 分片命名
 
 auto t = load<float>("data.pt");  // 根据扩展名自动检测
 ```
 
-**支持类型：** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`, `half`, `bfloat16`, `tf32`, `fp8_e4m3`, `fp8_e5m2`（`.pt` 格式支持全部类型；`.npy`/`.npz`/`.json` 仅支持数值类型）
+**支持类型：** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`, `half`, `bfloat16`, `tf32`, `fp8_e4m3`, `fp8_e5m2`（`.pt`/`.gguf`/`.safetensors` 格式支持全部类型；`.npy`/`.npz`/`.json` 仅支持数值类型）
+
+**safetensors 互操作（与 HuggingFace 生态完全兼容）：**
+
+```cpp
+// 单张量
+tensor.save("model.safetensors");
+auto t1 = load<float>("model.safetensors");
+
+// 多张量（同类型）
+save_safetensors_multi<float>({{"w1", w1}, {"w2", w2}}, "model.safetensors");
+auto model = load_safetensors_multi<float>("model.safetensors");
+
+// 混合 dtype（通过 SafeTensor 载体，与 PyTorch save_file 等价）
+std::vector<std::pair<std::string, SafeTensor>> state;
+state.emplace_back("weight", make_safetensor(w));
+state.emplace_back("ids", make_safetensor(ids));   // int64 张量
+save_safetensors_multi(state, "model.safetensors", {{"format", "pt"}});
+
+// 分片保存（默认单分片上限 5GB，输出 model.safetensors-00001-of-00002.safetensors）
+save_safetensors_sharded(state, "model.safetensors", 2ULL * 1024 * 1024 * 1024);
+// 分片加载（自动发现并合并全部分片）
+auto sharded = load_safetensors_sharded<float>("model.safetensors");
+```
 
 **与 PyTorch 互操作：** 使用 `tools/pt_converter.py` 可在 TensorN `.pt` 和 PyTorch `.pth` 之间相互转换：
 

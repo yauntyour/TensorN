@@ -100,7 +100,7 @@ TensorN
 ├── opt<T>             Lazy evaluation wrapper for chained operations
 ├── einsum()           Einstein summation engine
 ├── operations.hpp     High-level ops (matmul, dot, outer, gram, ...)
-├── static.hpp         Data I/O (csv, npy, npz, json, pt)
+├── static.hpp         Data I/O (csv, npy, npz, json, pt, gguf, safetensors)
 ├── memory_pool.hpp    CPU memory pool (bucket allocator, PooledAllocator, PooledVector)
 ├── BLAS/              OpenBLAS accelerated backend (OpenMP multi-core, im2col+GEMM conv)
 │   └── blas_tensor.hpp
@@ -169,11 +169,36 @@ tensor.save("data.npy");   // NumPy format
 tensor.save("data.npz");   // NumPy compressed
 tensor.save("data.json");  // JSON with shape + data
 tensor.save("data.pt");    // TensorN .pt binary format (also .pth)
+tensor.save("data.safetensors"); // safetensors format (HuggingFace compatible)
+tensor.save("model.safetensors-00001-of-00001.safetensors"); // safetensors shard naming
 
 auto t = load<float>("data.pt");  // auto-detect by extension
 ```
 
-**Supported types:** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t`
+**Supported types:** `float`, `double`, `int32_t`, `int64_t`, `uint8_t`, `int16_t` (`.pt`/`.gguf`/`.safetensors` support all types: `half`, `bfloat16`, `tf32`, `fp8_e4m3`, `fp8_e5m2`, ...)
+
+**safetensors interop (fully compatible with HuggingFace ecosystem):**
+
+```cpp
+// Single tensor
+tensor.save("model.safetensors");
+auto t1 = load<float>("model.safetensors");
+
+// Multiple tensors (same type)
+save_safetensors_multi<float>({{"w1", w1}, {"w2", w2}}, "model.safetensors");
+auto model = load_safetensors_multi<float>("model.safetensors");
+
+// Mixed dtypes (via SafeTensor carrier, equivalent to PyTorch save_file)
+std::vector<std::pair<std::string, SafeTensor>> state;
+state.emplace_back("weight", make_safetensor(w));
+state.emplace_back("ids", make_safetensor(ids));   // int64 tensor
+save_safetensors_multi(state, "model.safetensors", {{"format", "pt"}});
+
+// Sharded save (default max 5GB per shard, writes model.safetensors-00001-of-00002.safetensors)
+save_safetensors_sharded(state, "model.safetensors", 2ULL * 1024 * 1024 * 1024);
+// Sharded load (auto-discovers and merges all shards)
+auto sharded = load_safetensors_sharded<float>("model.safetensors");
+```
 
 **PyTorch interop:** use `tools/pt_converter.py` to convert between TensorN `.pt` and PyTorch `.pth`:
 

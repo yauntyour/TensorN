@@ -9,6 +9,7 @@
 #include "static.hpp"
 #include "BLAS/blas_tensor.hpp"
 #include "GGUF/gguf.hpp"
+#include "HF/safetensors.hpp"
 
 #ifndef TENSORN_CUDA_AVAILABLE
 #if __has_include(<cuda_runtime.h>)

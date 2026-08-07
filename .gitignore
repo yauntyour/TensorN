@@ -12,3 +12,5 @@ CMakeFiles/
 CMakeCache.txt
 .vscode
 build_cuda
+*.obj
+*.safetensors

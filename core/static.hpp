@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include "cnpy/cnpy.hpp"
 #include "GGUF/gguf.hpp"
+#include "HF/safetensors.hpp"
 
 template <typename T>
 constexpr bool is_supported_json_type()
@@ -620,6 +621,8 @@ namespace TensorN
                 fmt = "json";
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".gguf")
                 fmt = "gguf";
+            else if (filename.size() >= 12 && filename.substr(filename.size() - 12) == ".safetensors")
+                fmt = "safetensors";
             else
                 TENSOR_THROW("Cannot infer format from filename: " + filename);
         }
@@ -648,6 +651,10 @@ namespace TensorN
         {
             save_gguf<T>(*this, filename);
         }
+        else if (fmt == "safetensors")
+        {
+            save_safetensors<T>(*this, filename);
+        }
         else
         {
             TENSOR_THROW("Unsupported format: " + fmt);
@@ -673,6 +680,8 @@ namespace TensorN
                 fmt = "json";
             else if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".gguf")
                 fmt = "gguf";
+            else if (filename.size() >= 12 && filename.substr(filename.size() - 12) == ".safetensors")
+                fmt = "safetensors";
             else
                 TENSOR_THROW("Cannot infer format from filename: " + filename);
         }
@@ -700,6 +709,10 @@ namespace TensorN
         else if (fmt == "gguf")
         {
             return load_gguf<T>(filename);
+        }
+        else if (fmt == "safetensors")
+        {
+            return load_safetensors<T>(filename);
         }
         else
         {
