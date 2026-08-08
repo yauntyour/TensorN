@@ -283,7 +283,7 @@ namespace TensorN
     }
 
     // 多张量保存（混合 dtype，通过 SafeTensor 载体）
-    void save_safetensors_multi(
+    inline void save_safetensors_multi(
         const std::vector<std::pair<std::string, SafeTensor>> &tensors,
         const std::string &filename,
         const std::unordered_map<std::string, std::string> &metadata = {})
@@ -294,7 +294,7 @@ namespace TensorN
     // 分片保存：按 max_shard_size 贪心装箱，输出
     // model.safetensors-00001-of-00002.safetensors 等文件（单分片时为
     // model.safetensors-00001-of-00001.safetensors）。
-    void save_safetensors_sharded(
+    inline void save_safetensors_sharded(
         const std::vector<std::pair<std::string, SafeTensor>> &tensors,
         const std::string &base_filename,
         uint64_t max_shard_size = 5ULL * 1024 * 1024 * 1024,
